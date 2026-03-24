@@ -30,6 +30,7 @@ button, input, select { font: inherit; }
 .brand-image.missing .brand-fallback { display: inline-flex; }
 .header-copy .eyebrow { margin-bottom: 4px; }
 .profile-pill { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 999px; background: rgba(255,255,255,0.72); }
+.profile-link { text-decoration: none; }
 .avatar, .mini-avatar { display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; background: linear-gradient(180deg, #2b87ff, #1778ff); color: white; font-weight: 700; flex: 0 0 auto; }
 .avatar { width: 42px; height: 42px; }
 .mini-avatar { width: 26px; height: 26px; font-size: 0.72rem; }
@@ -71,11 +72,11 @@ h3 { font-size: 1.18rem; }
 .stack-form { display: grid; gap: 20px; margin-top: 24px; }
 .form-spacing { margin-top: 28px; }
 label { display: grid; gap: 10px; font-weight: 600; }
-.checkbox-row { display: grid; grid-template-columns: 18px 1fr; gap: 16px; align-items: start; font-weight: 500; margin-top: 8px; }
-.checkbox-row span { display: block; line-height: 1.5; max-width: 40rem; }
-.checkbox-row input[type="checkbox"], .tiny-check input[type="checkbox"] { appearance: none; width: 18px; height: 18px; border-radius: 5px; border: 2px solid rgba(23,120,255,0.35); background: white; margin: 0; position: relative; }
-.checkbox-row input[type="checkbox"]:checked::after, .tiny-check input[type="checkbox"]:checked::after { content: ""; position: absolute; inset: 3px; border-radius: 2px; background: var(--accent); }
-.tiny-check { display: inline-grid; grid-template-columns: 18px auto; gap: 6px; align-items: center; color: var(--muted); margin-right: 10px; }
+.checkbox-row { display: grid; grid-template-columns: 14px 1fr; gap: 20px; align-items: start; font-weight: 500; margin-top: 8px; }
+.checkbox-row span { display: block; line-height: 1.55; max-width: 40rem; padding-top: 1px; }
+.checkbox-row input[type="checkbox"], .tiny-check input[type="checkbox"] { appearance: none; width: 14px; height: 14px; border-radius: 4px; border: 1.5px solid rgba(23,120,255,0.35); background: white; margin: 3px 0 0; position: relative; flex: 0 0 auto; }
+.checkbox-row input[type="checkbox"]:checked::after, .tiny-check input[type="checkbox"]:checked::after { content: ""; position: absolute; inset: 2px; border-radius: 2px; background: var(--accent); }
+.tiny-check { display: inline-grid; grid-template-columns: 14px auto; gap: 10px; align-items: center; color: var(--muted); margin-right: 8px; }
 input, select { width: 100%; padding: 16px 17px; border-radius: 16px; border: 1px solid rgba(207,220,238,0.9); background: rgba(255,255,255,0.9); color: var(--text); outline: none; transition: border-color 150ms ease, box-shadow 150ms ease; }
 input:focus, select:focus { border-color: rgba(23,120,255,0.42); box-shadow: 0 0 0 5px rgba(23,120,255,0.1); }
 button { cursor: pointer; border: 0; border-radius: 999px; padding: 14px 20px; font-weight: 650; color: white; background: linear-gradient(180deg, #2b87ff, #1778ff); }
@@ -84,7 +85,9 @@ button { cursor: pointer; border: 0; border-radius: 999px; padding: 14px 20px; f
 .info-box, .guide-placeholder { margin-top: 20px; padding: 16px 18px; border-radius: 16px; background: rgba(248,251,255,0.92); border: 1px solid rgba(220,230,243,0.9); }
 .rule-list { margin: 10px 0 0; padding-left: 18px; line-height: 1.6; }
 .booking-overview { display: grid; grid-template-columns: minmax(360px, 0.95fr) minmax(460px, 1.05fr); gap: 18px; }
+.booking-mode-tabs { display: inline-flex; gap: 8px; margin-top: 18px; padding: 8px; border-radius: 999px; background: rgba(255,255,255,0.62); border: 1px solid rgba(255,255,255,0.8); }
 .guest-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.hidden-guest-fields { display: none; }
 .garage-below { margin-top: 0; }
 .booking-people-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; }
 .booking-person { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-radius: 16px; background: rgba(255,255,255,0.76); border: 1px solid rgba(255,255,255,0.86); }
@@ -127,7 +130,7 @@ th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.11em; }
   .brand-image { width: 100%; justify-content: flex-start; }
   .garage-grid { grid-template-columns: 1fr; }
   .week-cell { min-height: 112px; }
-  .checkbox-row { grid-template-columns: 18px 1fr; gap: 12px; }
+  .checkbox-row { grid-template-columns: 14px 1fr; gap: 14px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; }

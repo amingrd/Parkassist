@@ -21,20 +21,20 @@ def avatar_markup(name: str, profile_image: str, cls: str = "avatar") -> str:
     return f'<div class="{cls}">{escape(label)}</div>'
 
 
-def html_page(title: str, body: str, current_user=None, flash: Optional[str] = None, *, show_header: bool = True) -> str:
+def html_page(title: str, body: str, current_user=None, flash: Optional[str] = None, *, show_header: bool = True, profile_href: str = "/?tab=profile") -> str:
     flash_html = f'<div class="flash">{escape(flash)}</div>' if flash else ""
     header = ""
     if show_header:
         profile_block = ""
         if current_user:
             profile_block = f"""
-            <div class="profile-pill">
+            <a class="profile-pill profile-link" href="{escape(profile_href)}">
               {avatar_markup(current_user['name'], current_user['profile_image'])}
               <div>
                 <div class="profile-name">{escape(current_user['name'])}</div>
                 <div class="profile-meta">{escape(current_user['email'])}</div>
               </div>
-            </div>
+            </a>
             """
         header = f"""
         <header class="topbar glass">
@@ -121,6 +121,7 @@ def dashboard_page(
     own_bookings,
     flash: Optional[str],
     active_tab: str,
+    booking_mode: str,
     show_waitlist: bool,
     hidden_spots,
     current_week: str,
@@ -132,7 +133,6 @@ def dashboard_page(
         "booking": "active" if active_tab == "booking" else "",
         "history": "active" if active_tab == "history" else "",
         "guide": "active" if active_tab == "guide" else "",
-        "profile": "active" if active_tab == "profile" else "",
     }
     week_html = "".join(
         f"""
@@ -201,10 +201,15 @@ def dashboard_page(
           </div>
           <p class="panel-summary">{escape(selected_day_summary)}</p>
         </div>
+        <div class="booking-mode-tabs">
+          <a class="auth-tab {'active' if booking_mode == 'self' else ''}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=booking&booking_mode=self">Book for yourself</a>
+          <a class="auth-tab {'active' if booking_mode == 'guest' else ''}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=booking&booking_mode=guest">Book for someone else</a>
+        </div>
         <form method="post" action="/bookings" class="stack-form form-spacing">
           <input type="hidden" name="booking_date" value="{escape(selected_date)}">
           <input type="hidden" name="selected_date" value="{escape(selected_date)}">
           <input type="hidden" name="week" value="{escape(current_week)}">
+          <input type="hidden" name="booking_mode" value="{escape(booking_mode)}">
           <label>
             Vehicle size
             <select name="vehicle_size">
@@ -218,10 +223,10 @@ def dashboard_page(
             Parking spot
             <select name="spot_id">{spot_options}</select>
           </label>
-          <div class="guest-fields">
+          <div class="guest-fields {'hidden-guest-fields' if booking_mode != 'guest' else ''}">
             <label>
               Guest name
-              <input type="text" name="guest_name" placeholder="Optional">
+              <input type="text" name="guest_name" placeholder="Required for guest bookings">
             </label>
             <label>
               Guest email
@@ -305,14 +310,14 @@ def dashboard_page(
           <a class="auth-tab {tabs['booking']}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=booking">Booking</a>
           <a class="auth-tab {tabs['history']}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=history">History</a>
           <a class="auth-tab {tabs['guide']}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=guide">Guide</a>
-          <a class="auth-tab {tabs['profile']}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=profile">Profile</a>
           {admin_link}
         </div>
         {panel}
       </section>
     </main>
     """
-    return html_page("Parking Tool", body, current_user=current_user, flash=flash)
+    profile_href = f"/?week={escape(current_week)}&date={escape(selected_date)}&tab=profile"
+    return html_page("Parking Tool", body, current_user=current_user, flash=flash, profile_href=profile_href)
 
 
 def render_waitlist(show_waitlist: bool, waitlist_entry, selected_date: str, current_week: str) -> str:

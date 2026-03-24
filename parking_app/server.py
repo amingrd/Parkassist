@@ -49,6 +49,7 @@ class ParkingHandler(BaseHTTPRequestHandler):
                 params.get("week", [None])[0],
                 params.get("date", [None])[0],
                 params.get("tab", ["booking"])[0],
+                params.get("booking_mode", ["self"])[0],
             )
         if parsed.path == "/admin":
             if current_user["role"] != "admin":
@@ -159,6 +160,7 @@ class ParkingHandler(BaseHTTPRequestHandler):
         payload = self.parse_form()
         selected_date = payload.get("selected_date", date.today().isoformat())
         week = payload.get("week", self.current_week_start().isoformat())
+        booking_mode = payload.get("booking_mode", "self")
         try:
             SERVICE.create_booking(
                 actor_user_id=current_user["id"],
@@ -171,9 +173,9 @@ class ParkingHandler(BaseHTTPRequestHandler):
                 guest_name=payload.get("guest_name", "").strip(),
                 guest_email=payload.get("guest_email", "").strip().lower(),
             )
-            return self.redirect(self.dashboard_redirect(week, selected_date, "history", "Parking reserved successfully."))
+            return self.redirect(self.dashboard_redirect(week, selected_date, "history", "Parking reserved successfully.", booking_mode))
         except BookingError as exc:
-            return self.redirect(self.dashboard_redirect(week, selected_date, "booking", str(exc)))
+            return self.redirect(self.dashboard_redirect(week, selected_date, "booking", str(exc), booking_mode))
 
     def handle_cancel_booking(self, current_user, booking_id: int) -> None:
         payload = self.parse_form()
@@ -251,11 +253,13 @@ class ParkingHandler(BaseHTTPRequestHandler):
         REPO.log_audit(current_user["id"], "user_role_changed", f"user={user_id} role={role}")
         return self.redirect("/admin?flash=" + self.quote_message("User role updated."))
 
-    def render_dashboard(self, current_user, flash: str | None, week_value: str | None, selected_date_value: str | None, active_tab: str) -> None:
+    def render_dashboard(self, current_user, flash: str | None, week_value: str | None, selected_date_value: str | None, active_tab: str, booking_mode: str) -> None:
         week_start = self.parse_week(week_value)
         selected_date = selected_date_value or week_start.isoformat()
         if not (week_start <= datetime.strptime(selected_date, "%Y-%m-%d").date() <= week_start + timedelta(days=6)):
             selected_date = week_start.isoformat()
+        if booking_mode not in {"self", "guest"}:
+            booking_mode = "self"
 
         week_cells = self.build_week_cells(current_user["id"], week_start, selected_date)
         available_spots = REPO.list_available_spots(selected_date)
@@ -335,6 +339,7 @@ class ParkingHandler(BaseHTTPRequestHandler):
                 own_bookings=own_bookings,
                 flash=flash,
                 active_tab=active_tab,
+                booking_mode=booking_mode,
                 show_waitlist=len(available_spots) == 0,
                 hidden_spots=hidden_spots,
                 current_week=week_start.isoformat(),
@@ -446,8 +451,11 @@ class ParkingHandler(BaseHTTPRequestHandler):
     def quote_message(self, message: str) -> str:
         return urlencode({"flash": message}).split("=", 1)[1]
 
-    def dashboard_redirect(self, week: str, selected_date: str, tab: str, message: str) -> str:
-        return "/?" + urlencode({"week": week, "date": selected_date, "tab": tab, "flash": message})
+    def dashboard_redirect(self, week: str, selected_date: str, tab: str, message: str, booking_mode: str | None = None) -> str:
+        params = {"week": week, "date": selected_date, "tab": tab, "flash": message}
+        if booking_mode:
+            params["booking_mode"] = booking_mode
+        return "/?" + urlencode(params)
 
     def log_message(self, format: str, *args) -> None:
         return
