@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -10,14 +11,15 @@ from urllib.parse import parse_qs, urlencode, urlparse
 from parking_app.auth import clear_session_cookie, make_session_cookie, parse_user_cookie
 from parking_app.notifications import SlackWebhookSink
 from parking_app.repository import Repository
-from parking_app.services import BookingError, BookingService
-from parking_app.templates import admin_page, dashboard_page, login_page
+from parking_app.services import BannerError, BannerService, BookingError, BookingService, UploadedBannerImage
+from parking_app.templates import admin_page, banners_page, dashboard_page, login_page
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
 DATA_DIR = BASE_DIR / "data"
 REPO = Repository(DATA_DIR / "parking.db")
 SERVICE = BookingService(REPO, SlackWebhookSink(REPO, os.environ.get("SLACK_WEBHOOK_URL")))
+BANNER_SERVICE = BannerService(REPO, DATA_DIR / "banner_uploads", DATA_DIR / "banner_artifacts")
 
 
 def run() -> None:
@@ -50,6 +52,12 @@ class ParkingHandler(BaseHTTPRequestHandler):
                 params.get("date", [None])[0],
                 params.get("tab", ["booking"])[0],
             )
+        if parsed.path in {"/banners", "/banners/history"}:
+            selected_template = params.get("template", [None])[0]
+            latest_run_id = self.parse_int(params.get("run", [None])[0])
+            return self.render_banners(current_user, flash, selected_template, latest_run_id)
+        if parsed.path.startswith("/banners/download/"):
+            return self.handle_banner_download(current_user, int(parsed.path.split("/")[3]))
         if parsed.path == "/admin":
             if current_user["role"] != "admin":
                 return self.redirect(self.dashboard_redirect(self.current_week_start().isoformat(), date.today().isoformat(), "booking", "Admin access is required."))
@@ -71,6 +79,10 @@ class ParkingHandler(BaseHTTPRequestHandler):
 
         if parsed.path == "/profile/update":
             return self.handle_profile_update(current_user)
+        if parsed.path == "/banners/generate":
+            return self.handle_banner_generate(current_user)
+        if parsed.path.startswith("/banners/") and parsed.path.endswith("/rerun"):
+            return self.handle_banner_rerun(current_user, int(parsed.path.split("/")[2]))
         if parsed.path == "/bookings":
             return self.handle_create_booking(current_user)
         if parsed.path.startswith("/bookings/") and parsed.path.endswith("/cancel"):
@@ -154,6 +166,79 @@ class ParkingHandler(BaseHTTPRequestHandler):
             return self.redirect(self.dashboard_redirect(week, selected_date, "profile", "That email is already used by another account."))
         REPO.update_user_profile(current_user["id"], name, email, profile_image)
         return self.redirect(self.dashboard_redirect(week, selected_date, "profile", "Profile updated."))
+
+    def handle_banner_generate(self, current_user) -> None:
+        payload, files = self.parse_request_data()
+        template_set_id = payload.get("template_set_id", "")
+        field_errors = BANNER_SERVICE.validate_banner_fields(
+            template_set_id,
+            payload.get("headline", ""),
+            payload.get("subline", ""),
+            payload.get("button_text", ""),
+        )
+        image_file = files.get("image_upload")
+        if image_file is None:
+            field_errors["image_upload"] = "Please upload an image file."
+        if field_errors:
+            return self.render_banners(
+                current_user,
+                "Please fix the banner fields below.",
+                template_set_id or None,
+                None,
+                draft_values=payload,
+                field_errors=field_errors,
+            )
+
+        try:
+            run_id = BANNER_SERVICE.generate_banner_run(
+                user_id=current_user["id"],
+                template_set_id=template_set_id,
+                headline=payload.get("headline", ""),
+                subline=payload.get("subline", ""),
+                button_text=payload.get("button_text", ""),
+                image=UploadedBannerImage(
+                    filename=image_file["filename"],
+                    content_type=image_file["content_type"],
+                    body=image_file["body"],
+                ),
+            )
+            REPO.log_audit(current_user["id"], "banner_generated", f"run={run_id} template={template_set_id}")
+            return self.redirect("/banners?" + urlencode({"flash": "Banner ZIP created.", "run": str(run_id), "template": template_set_id}))
+        except BannerError as exc:
+            field_errors = dict(getattr(exc, "field_errors", {}))
+            return self.render_banners(
+                current_user,
+                str(exc),
+                template_set_id or None,
+                None,
+                draft_values=payload,
+                field_errors=field_errors,
+            )
+
+    def handle_banner_rerun(self, current_user, run_id: int) -> None:
+        try:
+            new_run_id = BANNER_SERVICE.rerun_banner(current_user["id"], run_id)
+            original = BANNER_SERVICE.get_run_for_user(current_user["id"], new_run_id)
+            template_set_id = original["template_set_id"] if original else ""
+            REPO.log_audit(current_user["id"], "banner_rerun", f"source_run={run_id} new_run={new_run_id}")
+            return self.redirect("/banners?" + urlencode({"flash": "Banner ZIP generated again.", "run": str(new_run_id), "template": template_set_id}))
+        except BannerError as exc:
+            return self.redirect("/banners?flash=" + self.quote_message(str(exc)))
+
+    def handle_banner_download(self, current_user, run_id: int) -> None:
+        run = BANNER_SERVICE.get_run_for_user(current_user["id"], run_id)
+        if not run or run["status"] != "completed" or not run["export_artifact_path"]:
+            return self.send_error(HTTPStatus.NOT_FOUND)
+        artifact_path = BANNER_SERVICE.artifacts_dir / run["export_artifact_path"]
+        if not artifact_path.exists():
+            return self.send_error(HTTPStatus.NOT_FOUND)
+        payload = artifact_path.read_bytes()
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "application/zip")
+        self.send_header("Content-Disposition", f'attachment; filename="{artifact_path.name}"')
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
 
     def handle_create_booking(self, current_user) -> None:
         payload = self.parse_form()
@@ -359,6 +444,34 @@ class ParkingHandler(BaseHTTPRequestHandler):
             )
         )
 
+    def render_banners(
+        self,
+        current_user,
+        flash: str | None,
+        selected_template_id: str | None,
+        latest_run_id: int | None,
+        *,
+        draft_values: dict[str, str] | None = None,
+        field_errors: dict[str, str] | None = None,
+    ) -> None:
+        template_sets = BANNER_SERVICE.list_template_sets()
+        if not template_sets:
+            return self.render_html(login_page(flash="No banner templates are configured."))
+        selected_template = next((item for item in template_sets if item["id"] == selected_template_id), template_sets[0])
+        latest_run = BANNER_SERVICE.get_run_for_user(current_user["id"], latest_run_id) if latest_run_id else None
+        self.render_html(
+            banners_page(
+                current_user=current_user,
+                template_sets=template_sets,
+                selected_template=selected_template,
+                draft_values=draft_values or {"template_set_id": selected_template["id"]},
+                field_errors=field_errors or {},
+                recent_runs=BANNER_SERVICE.list_runs_for_user(current_user["id"]),
+                flash=flash,
+                latest_run=latest_run,
+            )
+        )
+
     def build_week_cells(self, user_id: int, week_start: date, selected_date: str) -> list[dict[str, str | bool]]:
         today = date.today()
         latest = today + timedelta(days=6)
@@ -418,9 +531,56 @@ class ParkingHandler(BaseHTTPRequestHandler):
         return mapping.get(selection or "")
 
     def parse_form(self) -> dict[str, str]:
+        payload, _ = self.parse_request_data()
+        return payload
+
+    def parse_request_data(self) -> tuple[dict[str, str], dict[str, dict[str, str | bytes]]]:
+        content_type = self.headers.get("Content-Type", "")
         length = int(self.headers.get("Content-Length", "0"))
-        raw = self.rfile.read(length).decode("utf-8")
-        return {key: values[0] for key, values in parse_qs(raw).items()}
+        raw = self.rfile.read(length)
+        if content_type.startswith("multipart/form-data"):
+            return self.parse_multipart_form(content_type, raw)
+        decoded = raw.decode("utf-8")
+        return ({key: values[0] for key, values in parse_qs(decoded).items()}, {})
+
+    def parse_multipart_form(self, content_type: str, raw: bytes) -> tuple[dict[str, str], dict[str, dict[str, str | bytes]]]:
+        boundary_match = re.search(r'boundary="?([^";]+)"?', content_type)
+        if not boundary_match:
+            return {}, {}
+        boundary = ("--" + boundary_match.group(1)).encode("utf-8")
+        fields: dict[str, str] = {}
+        files: dict[str, dict[str, str | bytes]] = {}
+        for chunk in raw.split(boundary):
+            piece = chunk.strip()
+            if not piece or piece == b"--":
+                continue
+            if piece.endswith(b"--"):
+                piece = piece[:-2].rstrip(b"\r\n")
+            headers_raw, separator, body = piece.partition(b"\r\n\r\n")
+            if not separator:
+                continue
+            header_lines = headers_raw.decode("utf-8").split("\r\n")
+            header_map: dict[str, str] = {}
+            for line in header_lines:
+                if ":" in line:
+                    key, value = line.split(":", 1)
+                    header_map[key.strip().lower()] = value.strip()
+            disposition = header_map.get("content-disposition", "")
+            name_match = re.search(r'name="([^"]+)"', disposition)
+            if not name_match:
+                continue
+            field_name = name_match.group(1)
+            filename_match = re.search(r'filename="([^"]*)"', disposition)
+            body = body.rstrip(b"\r\n")
+            if filename_match:
+                files[field_name] = {
+                    "filename": filename_match.group(1),
+                    "content_type": header_map.get("content-type", "application/octet-stream"),
+                    "body": body,
+                }
+            else:
+                fields[field_name] = body.decode("utf-8")
+        return fields, files
 
     def parse_int(self, value: str | None) -> int | None:
         try:

@@ -1,0 +1,8 @@
+{
+  "name": "LeasingMarkt Banner Export Bridge",
+  "id": "leasingmarkt-banner-export-bridge",
+  "api": "1.0.0",
+  "main": "code.js",
+  "ui": "ui.html",
+  "editorType": ["figma"]
+}

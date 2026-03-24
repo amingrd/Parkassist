@@ -102,9 +102,17 @@ table { width: 100%; border-collapse: collapse; margin-top: 18px; }
 th, td { text-align: left; padding: 14px 10px; border-bottom: 1px solid rgba(23,38,63,0.08); vertical-align: top; }
 th { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.11em; }
 .inline-form, .history-actions { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.inline-link { text-decoration: none; }
+.banner-layout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(300px, 0.9fr); gap: 18px; }
+.banner-sidebar { display: grid; gap: 18px; }
+.banner-meta { display: block; margin-top: -4px; }
+.form-error { color: #b42318; font-size: 0.92rem; font-weight: 600; }
+.summary-card h3 { font-size: 2rem; }
+.history-actions form { margin: 0; }
 .admin-tab { margin-left: auto; }
 @media (max-width: 1180px) {
   .booking-overview,
+  .banner-layout,
   .admin-summary-grid,
   .admin-layout { grid-template-columns: 1fr; }
   .garage-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
