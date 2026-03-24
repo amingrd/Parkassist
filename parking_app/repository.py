@@ -105,37 +105,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (actor_user_id) REFERENCES users(id)
 );
-
-CREATE TABLE IF NOT EXISTS banner_template_sets (
-  id TEXT PRIMARY KEY,
-  display_name TEXT NOT NULL,
-  figma_file_key TEXT NOT NULL,
-  figma_file_url TEXT NOT NULL,
-  config_json TEXT NOT NULL,
-  is_active INTEGER NOT NULL DEFAULT 1
-);
-
-CREATE TABLE IF NOT EXISTS banner_runs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id INTEGER NOT NULL,
-  template_set_id TEXT NOT NULL,
-  headline TEXT NOT NULL,
-  subline TEXT NOT NULL,
-  button_text TEXT NOT NULL,
-  original_image_name TEXT NOT NULL,
-  stored_image_name TEXT NOT NULL,
-  image_mime_type TEXT NOT NULL,
-  image_width_px INTEGER NOT NULL DEFAULT 0,
-  image_height_px INTEGER NOT NULL DEFAULT 0,
-  image_size_bytes INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL CHECK(status IN ('completed', 'failed')),
-  error_message TEXT NOT NULL DEFAULT '',
-  export_artifact_path TEXT NOT NULL DEFAULT '',
-  plugin_payload_path TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  FOREIGN KEY (user_id) REFERENCES users(id),
-  FOREIGN KEY (template_set_id) REFERENCES banner_template_sets(id)
-);
 """
 
 
@@ -157,60 +126,6 @@ LM_SPOTS = [
     ("P19", "UG2", "standard", 1, 19, None, None, None, None, ""),
     ("P20", "UG2", "standard", 1, 20, None, None, None, None, ""),
     ("P21", "UG2", "standard", 1, 21, None, None, None, None, ""),
-]
-
-BANNER_TEMPLATE_SETS = [
-    (
-        "leasingmarkt-core-campaign",
-        "LeasingMarkt Core Campaign",
-        "LM_BANNERS_FILE_KEY",
-        "https://www.figma.com/file/LM_BANNERS_FILE_KEY/leasingmarkt-banners",
-        """
-        {
-          "description": "Fixed LeasingMarkt campaign banner set for internal marketing exports.",
-          "headline_max_chars": 42,
-          "subline_max_chars": 88,
-          "button_text_max_chars": 22,
-          "allowed_mime_types": ["image/png", "image/jpeg", "image/webp"],
-          "max_file_size_bytes": 4194304,
-          "min_width_px": 1400,
-          "min_height_px": 900,
-          "aspect_ratio_label": "14:9 or wider",
-          "figma_nodes": {
-            "headline": "BANNER_HEADLINE",
-            "subline": "BANNER_SUBLINE",
-            "button_text": "BANNER_BUTTON_TEXT",
-            "image": "BANNER_IMAGE"
-          },
-          "variants": [
-            {
-              "id": "hero_desktop",
-              "name": "Hero Desktop",
-              "export_name": "leasingmarkt-hero-desktop.png",
-              "width": 1200,
-              "height": 628,
-              "frame_name": "LM Hero / Desktop"
-            },
-            {
-              "id": "hero_mobile",
-              "name": "Hero Mobile",
-              "export_name": "leasingmarkt-hero-mobile.png",
-              "width": 1080,
-              "height": 1350,
-              "frame_name": "LM Hero / Mobile"
-            },
-            {
-              "id": "promo_square",
-              "name": "Promo Square",
-              "export_name": "leasingmarkt-promo-square.png",
-              "width": 1080,
-              "height": 1080,
-              "frame_name": "LM Promo / Square"
-            }
-          ]
-        }
-        """.strip(),
-    )
 ]
 
 
@@ -236,14 +151,6 @@ class Repository:
         with self.connection() as conn:
             conn.executescript(SCHEMA)
             self._migrate_schema(conn)
-            if conn.execute("SELECT COUNT(*) AS count FROM banner_template_sets").fetchone()["count"] == 0:
-                conn.executemany(
-                    """
-                    INSERT INTO banner_template_sets (id, display_name, figma_file_key, figma_file_url, config_json, is_active)
-                    VALUES (?, ?, ?, ?, ?, 1)
-                    """,
-                    BANNER_TEMPLATE_SETS,
-                )
             if conn.execute("SELECT COUNT(*) AS count FROM rule_sets").fetchone()["count"] == 0:
                 conn.execute(
                     "INSERT INTO rule_sets (id, max_days_per_week, max_consecutive_days, booking_window_days) VALUES (1, 3, 2, 7)"
@@ -410,7 +317,6 @@ class Repository:
 
     def remove_user(self, user_id: int) -> None:
         with self.connection() as conn:
-            conn.execute("DELETE FROM banner_runs WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM waitlist_entries WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM overrides WHERE user_id = ?", (user_id,))
             conn.execute("DELETE FROM bookings WHERE user_id = ?", (user_id,))
@@ -730,90 +636,3 @@ class Repository:
                 """,
                 (limit,),
             ).fetchall()
-
-    def list_banner_template_sets(self) -> list[sqlite3.Row]:
-        with self.connection() as conn:
-            return conn.execute(
-                "SELECT * FROM banner_template_sets WHERE is_active = 1 ORDER BY display_name ASC"
-            ).fetchall()
-
-    def get_banner_template_set(self, template_set_id: str) -> Optional[sqlite3.Row]:
-        with self.connection() as conn:
-            return conn.execute(
-                "SELECT * FROM banner_template_sets WHERE id = ? AND is_active = 1",
-                (template_set_id,),
-            ).fetchone()
-
-    def create_banner_run(
-        self,
-        user_id: int,
-        template_set_id: str,
-        headline: str,
-        subline: str,
-        button_text: str,
-        original_image_name: str,
-        stored_image_name: str,
-        image_mime_type: str,
-        image_width_px: int,
-        image_height_px: int,
-        image_size_bytes: int,
-        status: str,
-        error_message: str = "",
-        export_artifact_path: str = "",
-        plugin_payload_path: str = "",
-    ) -> int:
-        with self.connection() as conn:
-            cursor = conn.execute(
-                """
-                INSERT INTO banner_runs (
-                  user_id, template_set_id, headline, subline, button_text,
-                  original_image_name, stored_image_name, image_mime_type,
-                  image_width_px, image_height_px, image_size_bytes, status,
-                  error_message, export_artifact_path, plugin_payload_path
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    user_id,
-                    template_set_id,
-                    headline,
-                    subline,
-                    button_text,
-                    original_image_name,
-                    stored_image_name,
-                    image_mime_type,
-                    image_width_px,
-                    image_height_px,
-                    image_size_bytes,
-                    status,
-                    error_message,
-                    export_artifact_path,
-                    plugin_payload_path,
-                ),
-            )
-            return int(cursor.lastrowid)
-
-    def list_banner_runs_for_user(self, user_id: int, limit: int = 12) -> list[sqlite3.Row]:
-        with self.connection() as conn:
-            return conn.execute(
-                """
-                SELECT r.*, t.display_name AS template_display_name
-                FROM banner_runs r
-                JOIN banner_template_sets t ON t.id = r.template_set_id
-                WHERE r.user_id = ?
-                ORDER BY r.created_at DESC, r.id DESC
-                LIMIT ?
-                """,
-                (user_id, limit),
-            ).fetchall()
-
-    def get_banner_run(self, run_id: int) -> Optional[sqlite3.Row]:
-        with self.connection() as conn:
-            return conn.execute(
-                """
-                SELECT r.*, t.display_name AS template_display_name
-                FROM banner_runs r
-                JOIN banner_template_sets t ON t.id = r.template_set_id
-                WHERE r.id = ?
-                """,
-                (run_id,),
-            ).fetchone()
