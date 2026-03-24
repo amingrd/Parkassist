@@ -135,16 +135,29 @@ def dashboard_page(
         "guide": "active" if active_tab == "guide" else "",
     }
     week_html = "".join(
-        f"""
-        <a class="week-cell {'selected' if cell['selected'] else ''} {'dimmed' if cell['dimmed'] else ''}" href="/?week={cell['week']}&date={cell['date']}&tab={active_tab}">
-          <span class="week-day">{escape(cell['weekday'])}</span>
-          <span class="week-number">{escape(cell['day_number'])}</span>
-          <span class="week-date">{escape(cell['date_label'])}</span>
-          <span class="week-rail"><span class="week-fill" style="width:{escape(cell['fill_width'])}"></span></span>
-          <span class="week-state">{escape(cell['state'])}</span>
-          <span class="week-meta">{escape(cell['meta'])}</span>
-        </a>
-        """
+        (
+            f"""
+            <a class="week-cell {'selected' if cell['selected'] else ''} {'dimmed' if cell['dimmed'] else ''}" href="/?week={cell['week']}&date={cell['date']}&tab={active_tab}" title="{escape(cell['hover_note'])}">
+              <span class="week-day">{escape(cell['weekday'])}</span>
+              <span class="week-number">{escape(cell['day_number'])}</span>
+              <span class="week-date">{escape(cell['date_label'])}</span>
+              <span class="week-rail"><span class="week-fill" style="width:{escape(cell['fill_width'])}"></span></span>
+              <span class="week-state">{escape(cell['state'])}</span>
+              <span class="week-meta">{escape(cell['meta'])}</span>
+            </a>
+            """
+            if cell["bookable"]
+            else f"""
+            <div class="week-cell week-cell-static {'selected' if cell['selected'] else ''} {'dimmed' if cell['dimmed'] else ''}" title="{escape(cell['hover_note'])}">
+              <span class="week-day">{escape(cell['weekday'])}</span>
+              <span class="week-number">{escape(cell['day_number'])}</span>
+              <span class="week-date">{escape(cell['date_label'])}</span>
+              <span class="week-rail"><span class="week-fill" style="width:{escape(cell['fill_width'])}"></span></span>
+              <span class="week-state">{escape(cell['state'])}</span>
+              <span class="week-meta">{escape(cell['meta'])}</span>
+            </div>
+            """
+        )
         for cell in week_cells
     )
     spot_options = '<option value="">Auto-assign the best available spot</option>' + "".join(
@@ -190,8 +203,8 @@ def dashboard_page(
           <p class="panel-summary">{escape(selected_day_summary)}</p>
         </div>
         <div class="booking-mode-tabs">
-          <a class="booking-mode-tab {'active' if booking_mode == 'self' else ''}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=booking&booking_mode=self">Book for yourself</a>
-          <a class="booking-mode-tab secondary {'active' if booking_mode == 'guest' else ''}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=booking&booking_mode=guest">Book for someone else</a>
+          <a class="booking-mode-tab {'secondary' if booking_mode == 'guest' else 'active'}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=booking&booking_mode=self">Book for yourself</a>
+          <a class="booking-mode-tab {'active' if booking_mode == 'guest' else 'secondary'}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=booking&booking_mode=guest">Book for someone else</a>
         </div>
         <form method="post" action="/bookings" class="stack-form form-spacing">
           <input type="hidden" name="booking_date" value="{escape(selected_date)}">
@@ -398,7 +411,7 @@ def admin_page(*, current_user, rules, spots, users, bookings, waitlist_entries,
             <p class="lead compact">Manage people, rules, and daily occupancy from one place.</p>
           </div>
           <div class="week-nav">
-            <a class="nav-button" href="/?tab=booking">Back to booking view</a>
+            <a class="primary-link-button" href="/?tab=booking">Back to booking view</a>
           </div>
         </div>
       </section>

@@ -190,7 +190,7 @@ class ParkingHandler(BaseHTTPRequestHandler):
             SERVICE.cancel_booking(
                 current_user["id"],
                 booking_id,
-                channel_notice_sent=payload.get("channel_notice_sent") == "yes",
+                channel_notice_sent=True,
                 is_sick=payload.get("is_sick") == "yes",
                 is_admin=current_user["role"] == "admin",
             )
@@ -299,7 +299,6 @@ class ParkingHandler(BaseHTTPRequestHandler):
                     f"<form method='post' action='/bookings/{row['id']}/cancel' class='history-actions'>"
                     f"<input type='hidden' name='selected_date' value='{selected_date}'>"
                     f"<input type='hidden' name='week' value='{week_start.isoformat()}'>"
-                    "<label class='tiny-check'><input type='checkbox' name='channel_notice_sent' value='yes'><span class='checkbox-control' aria-hidden='true'></span><span class='checkbox-text'>Posted in channel</span></label>"
                     "<button class='ghost-button' type='submit'>Cancel</button>"
                     "</form>"
                 )
@@ -370,24 +369,30 @@ class ParkingHandler(BaseHTTPRequestHandler):
             day = week_start + timedelta(days=offset)
             free = len(REPO.list_available_spots(day.isoformat())) if day.weekday() < 5 else 0
             own_booking = REPO.get_user_booking_for_date(user_id, day.isoformat())
+            bookable = day.weekday() < 5 and today <= day <= latest
             if day.weekday() >= 5:
                 state = "Weekend"
+                hover_note = "Weekend spaces are not bookable in the tool. If needed, the spots can still be used over the weekend."
             elif day < today or day > latest:
                 state = "Outside booking window"
+                hover_note = "Bookings are only available for the current work week window."
             else:
                 state = f"{free}/{active_spots} free"
+                hover_note = ""
             cells.append(
                 {
                     "date": day.isoformat(),
                     "week": week_start.isoformat(),
                     "selected": day.isoformat() == selected_date,
                     "dimmed": not (today <= day <= latest),
+                    "bookable": bookable,
                     "weekday": day.strftime("%a"),
                     "day_number": str(day.day),
                     "date_label": day.strftime("%b"),
                     "state": state,
                     "meta": "Your booking" if own_booking else ("Full" if free == 0 and day.weekday() < 5 else ""),
                     "fill_width": "0%" if active_spots == 0 else f"{int(((active_spots - free) / active_spots) * 100)}%",
+                    "hover_note": hover_note,
                 }
             )
         return cells

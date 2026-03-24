@@ -62,6 +62,8 @@ h3 { font-size: 1.18rem; }
 .week-cell:hover { background: rgba(255,255,255,0.94); box-shadow: 0 10px 24px rgba(31,61,104,0.08); }
 .week-cell.selected { border-color: rgba(23,120,255,0.34); background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(233,242,255,0.96)); }
 .week-cell.dimmed { opacity: 0.46; }
+.week-cell-static { cursor: not-allowed; }
+.week-cell-static:hover { box-shadow: none; }
 .week-day { font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); }
 .week-number { font-size: 1.2rem; font-weight: 720; line-height: 1; }
 .week-date { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
@@ -143,6 +145,18 @@ button { cursor: pointer; border: 0; border-radius: 999px; padding: 12px 18px; f
 .booking-mode-tab { display: inline-flex; align-items: center; justify-content: center; min-height: 42px; padding: 0 18px; border-radius: 999px; text-decoration: none; font-weight: 650; color: white; background: linear-gradient(180deg, #2b87ff, #1778ff); }
 .booking-mode-tab.secondary { background: transparent; color: var(--text); border: 1px solid rgba(23, 38, 63, 0.65); }
 .booking-mode-tab.active { box-shadow: 0 10px 20px rgba(23,120,255,0.16); }
+.primary-link-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 18px;
+  border-radius: 999px;
+  text-decoration: none;
+  font-weight: 650;
+  color: #fff;
+  background: linear-gradient(180deg, #2b87ff, #1778ff);
+}
 .guest-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .hidden-guest-fields { display: none; }
 .garage-below { margin-top: 0; }
