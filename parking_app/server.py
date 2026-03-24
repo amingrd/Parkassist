@@ -280,30 +280,26 @@ class ParkingHandler(BaseHTTPRequestHandler):
                     "state": "Booked" if booking else "Available",
                     "booked_by_name": booking["booking_name"] if booking else "",
                     "booked_by_image": REPO.get_user(booking["user_id"])["profile_image"] if booking else "",
-                    "detail": booking["booking_email"] if booking and booking["guest_name"] else "",
-                }
-            )
-
-        day_booking_rows = []
-        for row in day_bookings:
-            day_booking_rows.append(
-                {
-                    "spot_label": row["spot_label"],
-                    "booking_name": row["booking_name"],
-                    "booking_type": "Guest booking" if row["guest_name"] else "Team member",
-                    "profile_image": REPO.get_user(row["user_id"])["profile_image"],
+                    "detail": booking["booking_name"] if booking else "",
                 }
             )
 
         own_bookings = []
-        for row in REPO.list_bookings_for_user(current_user["id"]):
+        booking_rows = sorted(
+            REPO.list_bookings_for_user(current_user["id"]),
+            key=lambda row: (
+                0 if row["status"] == "active" else 1,
+                row["booking_date"] if row["status"] == "active" else f"z{row['booking_date']}",
+            ),
+        )
+        for row in booking_rows:
             action_html = ""
             if row["status"] == "active":
                 action_html = (
                     f"<form method='post' action='/bookings/{row['id']}/cancel' class='history-actions'>"
                     f"<input type='hidden' name='selected_date' value='{selected_date}'>"
                     f"<input type='hidden' name='week' value='{week_start.isoformat()}'>"
-                    "<label class='tiny-check'><input type='checkbox' name='channel_notice_sent' value='yes'>Posted in channel</label>"
+                    "<label class='tiny-check'><input type='checkbox' name='channel_notice_sent' value='yes'><span class='checkbox-control' aria-hidden='true'></span><span class='checkbox-text'>Posted in channel</span></label>"
                     "<button class='ghost-button' type='submit'>Cancel</button>"
                     "</form>"
                 )
@@ -314,6 +310,7 @@ class ParkingHandler(BaseHTTPRequestHandler):
                     "duration_label": "Half day" if row["half_day"] else "Full day",
                     "status_label": "Active" if row["status"] == "active" else "Cancelled",
                     "booking_for_label": row["guest_name"] if row["guest_name"] else "You",
+                    "is_active": row["status"] == "active",
                     "action_html": action_html,
                 }
             )
@@ -329,12 +326,12 @@ class ParkingHandler(BaseHTTPRequestHandler):
                 next_week_href="/?" + urlencode({"week": (week_start + timedelta(days=7)).isoformat(), "date": (week_start + timedelta(days=7)).isoformat(), "tab": active_tab}),
                 week_cells=week_cells,
                 selected_date=selected_date,
-                selected_day_summary=f"{len(available_spots)} of {total_spots} spots available on {self.format_date(selected_date)}.",
+                selected_day_summary=f"{len(available_spots)} of {total_spots} spots available.",
                 booked_spots_count=booked_spots_count,
                 selected_booking=selected_booking,
                 waitlist_entry=waitlist_entry,
                 spot_map=spot_map,
-                day_booking_rows=day_booking_rows,
+                day_booking_rows=[],
                 compatible_spots=available_spots,
                 own_bookings=own_bookings,
                 flash=flash,

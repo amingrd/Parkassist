@@ -128,7 +128,7 @@ def dashboard_page(
     garage_video_available: bool,
     formatted_selected_date: str,
 ) -> str:
-    admin_link = '<a class="auth-tab admin-tab" href="/admin">Admin</a>' if current_user["role"] == "admin" else ""
+    admin_link = '<a class="auth-tab" href="/admin">Admin</a>' if current_user["role"] == "admin" else ""
     tabs = {
         "booking": "active" if active_tab == "booking" else "",
         "history": "active" if active_tab == "history" else "",
@@ -166,21 +166,9 @@ def dashboard_page(
         """
         for spot in spot_map
     )
-    day_booking_html = "".join(
-        f"""
-        <div class="booking-person">
-          {avatar_markup(row['booking_name'], row['profile_image'], cls='mini-avatar')}
-          <div>
-            <div class="booking-person-name">{escape(row['booking_name'])}</div>
-            <div class="booking-person-meta">{escape(row['spot_label'])} · {escape(row['booking_type'])}</div>
-          </div>
-        </div>
-        """
-        for row in day_booking_rows
-    )
     history_rows = "".join(
         f"""
-        <tr>
+        <tr class="history-row {'history-row-active' if row['is_active'] else ''}">
           <td>{escape(row['formatted_date'])}</td>
           <td>{escape(row['spot_label'])}</td>
           <td>{escape(row['booking_for_label'])}</td>
@@ -202,8 +190,8 @@ def dashboard_page(
           <p class="panel-summary">{escape(selected_day_summary)}</p>
         </div>
         <div class="booking-mode-tabs">
-          <a class="auth-tab {'active' if booking_mode == 'self' else ''}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=booking&booking_mode=self">Book for yourself</a>
-          <a class="auth-tab {'active' if booking_mode == 'guest' else ''}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=booking&booking_mode=guest">Book for someone else</a>
+          <a class="booking-mode-tab {'active' if booking_mode == 'self' else ''}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=booking&booking_mode=self">Book for yourself</a>
+          <a class="booking-mode-tab secondary {'active' if booking_mode == 'guest' else ''}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=booking&booking_mode=guest">Book for someone else</a>
         </div>
         <form method="post" action="/bookings" class="stack-form form-spacing">
           <input type="hidden" name="booking_date" value="{escape(selected_date)}">
@@ -235,7 +223,8 @@ def dashboard_page(
           </div>
           <label class="checkbox-row">
             <input type="checkbox" name="policy_acknowledged" value="yes" required>
-            <span>I need this parking space for a full office day and accept the parking rules.</span>
+            <span class="checkbox-control" aria-hidden="true"></span>
+            <span class="checkbox-text">I need this parking space for a full office day and accept the parking rules.</span>
           </label>
           <button type="submit">Reserve parking</button>
         </form>
@@ -249,7 +238,6 @@ def dashboard_page(
             <h3>{escape(str(booked_spots_count))} spots reserved</h3>
           </div>
         </div>
-        <div class="booking-people-list">{day_booking_html or "<div class='guide-placeholder'>No bookings for this day yet.</div>"}</div>
         <div class="garage-grid">{garage_html}</div>
       </section>
     </section>
@@ -291,7 +279,7 @@ def dashboard_page(
     """
     panel = {"booking": booking_panel, "history": history_panel, "guide": guide_panel, "profile": profile_panel}.get(active_tab, booking_panel)
     body = f"""
-    <main class="dashboard-stack">
+    <main class="dashboard-stack" data-enhanced-nav="dashboard">
       <section class="glass week-panel">
         <div class="week-header">
           <div>
@@ -299,8 +287,8 @@ def dashboard_page(
             <h2 class="week-range">{escape(week_label)}</h2>
           </div>
           <div class="week-nav">
-            <a class="nav-button" href="{escape(prev_week_href)}">Previous</a>
-            <a class="nav-button" href="{escape(next_week_href)}">Next</a>
+            <a class="nav-button secondary-button" href="{escape(prev_week_href)}">Previous</a>
+            <a class="nav-button secondary-button" href="{escape(next_week_href)}">Next</a>
           </div>
         </div>
         <div class="week-grid">{week_html}</div>

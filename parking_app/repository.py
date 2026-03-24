@@ -163,6 +163,17 @@ class Repository:
             else:
                 conn.execute("UPDATE users SET password_hash = ? WHERE password_hash IS NULL", (hash_password("parking123"),))
                 conn.execute("UPDATE parking_spots SET notes = '' WHERE label IN ('P14','P15','P16','P17','P18','P19','P20','P21')")
+                conn.execute(
+                    """
+                    UPDATE parking_spots
+                    SET notes = CASE
+                      WHEN label = 'P5' THEN 'Lower double-parker. Max height 165 cm.'
+                      WHEN label = 'P6' THEN 'Upper double-parker. Max height 150 cm.'
+                      ELSE notes
+                    END
+                    WHERE label IN ('P5', 'P6')
+                    """
+                )
             if self._needs_spot_reset(conn):
                 conn.execute("DELETE FROM waitlist_entries")
                 conn.execute("DELETE FROM bookings")
