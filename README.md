@@ -31,12 +31,10 @@ Seeded admin:
 
 ## Local architecture
 
-- `parking_app/server.py`: HTTP routing and calendar/dashboard composition
-- `parking_app/services.py`: booking rules, cancellations, height checks, waitlist promotion
-- `parking_app/repository.py`: SQLite persistence, LM spot inventory, user bans, and audit storage
-- `parking_app/auth.py`: local cookie auth with an Okta-ready seam
-- `static/style.css`: calmer translucent UI and garage visualizer styling
-- `static/app.js`: minimal page-entry enhancement only
+- `parking_app/`: application package for routing, auth, services, persistence, and templates
+- `assets/web/`: web-facing CSS, JS, and static assets
+- `runtime/data/`: local SQLite database and runtime-only files
+- `tests/`: service-level regression coverage
 
 ## Production follow-up
 

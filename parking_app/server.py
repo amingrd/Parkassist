@@ -14,8 +14,8 @@ from parking_app.services import BookingError, BookingService
 from parking_app.templates import admin_page, dashboard_page, login_page
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-STATIC_DIR = BASE_DIR / "static"
-DATA_DIR = BASE_DIR / "data"
+STATIC_DIR = BASE_DIR / "assets" / "web"
+DATA_DIR = BASE_DIR / "runtime" / "data"
 REPO = Repository(DATA_DIR / "parking.db")
 SERVICE = BookingService(REPO, SlackWebhookSink(REPO, os.environ.get("SLACK_WEBHOOK_URL")))
 

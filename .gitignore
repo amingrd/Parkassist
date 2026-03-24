@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
-data/parking.db
+.DS_Store
+runtime/data/
+runtime/data/parking.db
