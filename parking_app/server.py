@@ -1,55 +1,133 @@
 from __future__ import annotations
 
-import os
+import json
+import sys
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
-from parking_app.auth import clear_session_cookie, make_session_cookie, parse_user_cookie
+from parking_app.auth import (
+    clear_session_cookie,
+    clear_state_cookie,
+    create_oidc_state,
+    make_session_cookie,
+    make_state_cookie,
+    parse_state_cookie,
+    parse_user_cookie,
+)
+from parking_app.config import Settings
 from parking_app.notifications import MultiChannelNotificationSink
-from parking_app.repository import Repository
+from parking_app.oidc import OIDCClient, load_oidc_profile, safe_oidc_error_message
+from parking_app.repository_factory import create_repository
 from parking_app.services import BookingError, BookingService
 from parking_app.templates import admin_page, dashboard_page, login_page
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-STATIC_DIR = BASE_DIR / "assets" / "web"
-DATA_DIR = BASE_DIR / "runtime" / "data"
-REPO = Repository(DATA_DIR / "parking.db")
-SERVICE = BookingService(
-    REPO,
-    MultiChannelNotificationSink(
-        REPO,
-        os.environ.get("SLACK_WEBHOOK_URL"),
-        smtp_host=os.environ.get("SMTP_HOST"),
-        smtp_port=int(os.environ.get("SMTP_PORT", "587")),
-        smtp_username=os.environ.get("SMTP_USERNAME"),
-        smtp_password=os.environ.get("SMTP_PASSWORD"),
-        smtp_use_tls=os.environ.get("SMTP_USE_TLS", "true").lower() != "false",
-        sender_email=os.environ.get("EMAIL_FROM"),
-        guide_url=os.environ.get("PARKING_GUIDE_URL"),
-    ),
-)
+
+
+@dataclass
+class AppContext:
+    settings: Settings
+    repository: object
+    service: BookingService
+    oidc_client: OIDCClient | None
+
+
+def build_app_context() -> AppContext:
+    settings = Settings.from_env(BASE_DIR)
+    repository = create_repository(settings)
+    notifier = MultiChannelNotificationSink(
+        repository,
+        settings.slack_webhook_url,
+        smtp_host=settings.smtp_host,
+        smtp_port=settings.smtp_port,
+        smtp_username=settings.smtp_username,
+        smtp_password=settings.smtp_password,
+        smtp_use_tls=settings.smtp_use_tls,
+        sender_email=settings.sender_email,
+        guide_url=settings.guide_url,
+    )
+    oidc_client = None
+    if settings.is_okta_auth:
+        oidc_client = OIDCClient(
+            issuer=settings.okta_issuer or "",
+            client_id=settings.okta_client_id or "",
+            client_secret=settings.okta_client_secret or "",
+            redirect_uri=settings.okta_redirect_uri or "",
+        )
+    return AppContext(
+        settings=settings,
+        repository=repository,
+        service=BookingService(repository, notifier),
+        oidc_client=oidc_client,
+    )
+
+
+APP = build_app_context()
 
 
 def run() -> None:
-    port = int(os.environ.get("PORT", "8000"))
-    server = ThreadingHTTPServer(("127.0.0.1", port), ParkingHandler)
-    print(f"Parking app running on http://127.0.0.1:{port}")
+    server = ThreadingHTTPServer((APP.settings.host, APP.settings.port), ParkingHandler)
+    print(f"Parking app running on {APP.settings.base_url}")
     server.serve_forever()
 
 
 class ParkingHandler(BaseHTTPRequestHandler):
+    @property
+    def settings(self) -> Settings:
+        return APP.settings
+
+    @property
+    def repo(self):
+        return APP.repository
+
+    @property
+    def service(self) -> BookingService:
+        return APP.service
+
+    @property
+    def oidc_client(self) -> OIDCClient | None:
+        return APP.oidc_client
+
+    @property
+    def static_dir(self) -> Path:
+        return self.settings.static_dir
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         if parsed.path.startswith("/static/"):
             return self.serve_static(parsed.path.removeprefix("/static/"))
+        if parsed.path in {"/health", "/healthz", "/health/liveness", "/health/readiness"}:
+            return self.render_json(
+                {
+                    "status": "ok",
+                    "probe": parsed.path,
+                    "auth_mode": self.settings.auth_mode,
+                    "database_backend": "postgresql" if (self.settings.database_url or "").startswith(("postgres://", "postgresql://")) else "sqlite",
+                    "app_env": self.settings.app_env,
+                }
+            )
 
         params = parse_qs(parsed.query)
         flash = params.get("flash", [None])[0]
         if parsed.path in {"/login", "/register"}:
-            return self.render_html(login_page(mode="register" if parsed.path == "/register" else "login", flash=flash))
+            if self.settings.is_okta_auth and parsed.path == "/register":
+                return self.redirect("/login")
+            return self.render_html(
+                login_page(
+                    mode="register" if parsed.path == "/register" else "login",
+                    flash=flash,
+                    auth_mode=self.settings.auth_mode,
+                    okta_login_href="/auth/okta/start" if self.settings.is_okta_auth else None,
+                )
+            )
+        if parsed.path == "/auth/okta/start":
+            return self.handle_oidc_start()
+        if parsed.path == "/auth/okta/callback":
+            return self.handle_oidc_callback(parsed)
 
         current_user = self.current_user()
         if not current_user:
@@ -66,7 +144,14 @@ class ParkingHandler(BaseHTTPRequestHandler):
             )
         if parsed.path == "/admin":
             if current_user["role"] != "admin":
-                return self.redirect(self.dashboard_redirect(self.current_week_start().isoformat(), date.today().isoformat(), "booking", "Admin access is required."))
+                return self.redirect(
+                    self.dashboard_redirect(
+                        self.current_week_start().isoformat(),
+                        date.today().isoformat(),
+                        "booking",
+                        "Admin access is required.",
+                    )
+                )
             return self.render_admin(current_user, flash)
         self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -77,7 +162,7 @@ class ParkingHandler(BaseHTTPRequestHandler):
         if parsed.path == "/register":
             return self.handle_register()
         if parsed.path == "/logout":
-            return self.redirect("/login", cookie=clear_session_cookie())
+            return self.redirect("/login", cookie=clear_session_cookie(secure=self.settings.session_cookie_secure))
 
         current_user = self.current_user()
         if not current_user:
@@ -95,7 +180,14 @@ class ParkingHandler(BaseHTTPRequestHandler):
             return self.handle_leave_waitlist(current_user, int(parsed.path.split("/")[2]))
 
         if current_user["role"] != "admin":
-            return self.redirect(self.dashboard_redirect(self.current_week_start().isoformat(), date.today().isoformat(), "booking", "Admin access is required."))
+            return self.redirect(
+                self.dashboard_redirect(
+                    self.current_week_start().isoformat(),
+                    date.today().isoformat(),
+                    "booking",
+                    "Admin access is required.",
+                )
+            )
 
         if parsed.path == "/admin/rules":
             return self.handle_update_rules(current_user)
@@ -108,7 +200,7 @@ class ParkingHandler(BaseHTTPRequestHandler):
         self.send_error(HTTPStatus.NOT_FOUND)
 
     def serve_static(self, relative_path: str) -> None:
-        file_path = STATIC_DIR / relative_path
+        file_path = self.static_dir / relative_path
         if not file_path.exists():
             return self.send_error(HTTPStatus.NOT_FOUND)
         content_type = "text/plain; charset=utf-8"
@@ -126,18 +218,29 @@ class ParkingHandler(BaseHTTPRequestHandler):
         self.wfile.write(file_path.read_bytes())
 
     def current_user(self):
-        user_id = parse_user_cookie(self.headers.get("Cookie"))
-        return REPO.get_user(user_id) if user_id else None
+        user_id = parse_user_cookie(self.headers.get("Cookie"), self.settings.session_secret)
+        return self.repo.get_user(user_id) if user_id else None
 
     def handle_login(self) -> None:
+        if self.settings.is_okta_auth:
+            return self.redirect("/login?flash=" + self.quote_message("Use Okta to sign in to this environment."))
         payload = self.parse_form()
-        user = REPO.authenticate_user(payload.get("email", "").strip().lower(), payload.get("password", ""))
+        user = self.repo.authenticate_user(payload.get("email", "").strip().lower(), payload.get("password", ""))
         if not user:
             return self.redirect("/login?flash=" + self.quote_message("Invalid email or password."))
-        REPO.log_audit(user["id"], "login", f"user={user['email']}")
-        return self.redirect("/", cookie=make_session_cookie(user["id"]))
+        self.repo.log_audit(user["id"], "login", f"user={user['email']} auth=local")
+        return self.redirect(
+            "/",
+            cookie=make_session_cookie(
+                user["id"],
+                self.settings.session_secret,
+                secure=self.settings.session_cookie_secure,
+            ),
+        )
 
     def handle_register(self) -> None:
+        if self.settings.is_okta_auth:
+            return self.redirect("/login?flash=" + self.quote_message("Registration is handled through Okta in this environment."))
         payload = self.parse_form()
         name = payload.get("name", "").strip()
         email = payload.get("email", "").strip().lower()
@@ -148,25 +251,91 @@ class ParkingHandler(BaseHTTPRequestHandler):
         password = payload.get("password", "")
         if password != payload.get("confirm_password", "") or len(password) < 8:
             return self.redirect("/register?flash=" + self.quote_message("Passwords must match and contain at least 8 characters."))
-        if REPO.get_user_by_email(email):
+        if self.repo.get_user_by_email(email):
             return self.redirect("/login?flash=" + self.quote_message("That email already exists. Please log in instead."))
-        user = REPO.create_user(name, email, password)
-        REPO.log_audit(user["id"], "register", f"user={user['email']}")
-        return self.redirect("/", cookie=make_session_cookie(user["id"]))
+        user = self.repo.create_user(name, email, password)
+        self.repo.log_audit(user["id"], "register", f"user={user['email']} auth=local")
+        return self.redirect(
+            "/",
+            cookie=make_session_cookie(
+                user["id"],
+                self.settings.session_secret,
+                secure=self.settings.session_cookie_secure,
+            ),
+        )
+
+    def handle_oidc_start(self) -> None:
+        if not self.settings.is_okta_auth or self.oidc_client is None:
+            return self.redirect("/login")
+        state = create_oidc_state()
+        auth_url = self.oidc_client.build_authorization_url(state)
+        return self.redirect(
+            auth_url,
+            cookie=make_state_cookie(
+                state,
+                self.settings.session_secret,
+                secure=self.settings.session_cookie_secure,
+            ),
+        )
+
+    def handle_oidc_callback(self, parsed) -> None:
+        if not self.settings.is_okta_auth or self.oidc_client is None:
+            return self.redirect("/login")
+        params = parse_qs(parsed.query)
+        state = params.get("state", [""])[0]
+        code = params.get("code", [""])[0]
+        expected_state = parse_state_cookie(self.headers.get("Cookie"), self.settings.session_secret)
+        if not state or not code or state != expected_state:
+            return self.redirect(
+                "/login?flash=" + self.quote_message("Your sign-in session expired. Please try again."),
+                cookie=clear_state_cookie(secure=self.settings.session_cookie_secure),
+            )
+        try:
+            profile = load_oidc_profile(self.oidc_client, code)
+            user = self.repo.find_or_create_sso_user(
+                name=profile["name"],
+                email=profile["email"],
+                auth_provider="okta",
+                external_subject=profile["subject"],
+            )
+            if profile["email"] in self.settings.bootstrap_admin_emails and user["role"] != "admin":
+                self.repo.set_user_role(user["id"], "admin")
+                user = self.repo.get_user(user["id"])
+            self.repo.log_audit(user["id"], "login", f"user={user['email']} auth=okta")
+            return self.redirect(
+                "/",
+                cookie=[
+                    clear_state_cookie(secure=self.settings.session_cookie_secure),
+                    make_session_cookie(
+                        user["id"],
+                        self.settings.session_secret,
+                        secure=self.settings.session_cookie_secure,
+                    ),
+                ],
+            )
+        except Exception as exc:  # pragma: no cover - requires live OIDC integration
+            return self.redirect(
+                "/login?flash=" + self.quote_message(safe_oidc_error_message(exc)),
+                cookie=clear_state_cookie(secure=self.settings.session_cookie_secure),
+            )
 
     def handle_profile_update(self, current_user) -> None:
         payload = self.parse_form()
         week = payload.get("week", self.current_week_start().isoformat())
         selected_date = payload.get("date", date.today().isoformat())
+        profile_image = payload.get("profile_image", "").strip()
+        if self.settings.is_okta_auth or current_user["auth_provider"] == "okta":
+            self.repo.update_profile_image(current_user["id"], profile_image)
+            return self.redirect(self.dashboard_redirect(week, selected_date, "profile", "Profile updated."))
+
         name = payload.get("name", "").strip()
         email = payload.get("email", "").strip().lower()
-        profile_image = payload.get("profile_image", "").strip()
         if not name or "@" not in email:
             return self.redirect(self.dashboard_redirect(week, selected_date, "profile", "Please enter a valid name and email."))
-        existing = REPO.get_user_by_email(email)
+        existing = self.repo.get_user_by_email(email)
         if existing and existing["id"] != current_user["id"]:
             return self.redirect(self.dashboard_redirect(week, selected_date, "profile", "That email is already used by another account."))
-        REPO.update_user_profile(current_user["id"], name, email, profile_image)
+        self.repo.update_user_profile(current_user["id"], name, email, profile_image)
         return self.redirect(self.dashboard_redirect(week, selected_date, "profile", "Profile updated."))
 
     def handle_create_booking(self, current_user) -> None:
@@ -175,7 +344,7 @@ class ParkingHandler(BaseHTTPRequestHandler):
         week = payload.get("week", self.current_week_start().isoformat())
         booking_mode = payload.get("booking_mode", "self")
         try:
-            SERVICE.create_booking(
+            self.service.create_booking(
                 actor_user_id=current_user["id"],
                 target_user_id=current_user["id"],
                 booking_date_str=payload.get("booking_date", ""),
@@ -194,13 +363,13 @@ class ParkingHandler(BaseHTTPRequestHandler):
         payload = self.parse_form()
         selected_date = payload.get("selected_date", date.today().isoformat())
         week = payload.get("week", self.current_week_start().isoformat())
-        booking = REPO.get_booking(booking_id)
+        booking = self.repo.get_booking(booking_id)
         if not booking:
             return self.redirect(self.dashboard_redirect(week, selected_date, "history", "Booking not found."))
         if current_user["role"] != "admin" and booking["user_id"] != current_user["id"]:
             return self.redirect(self.dashboard_redirect(week, selected_date, "history", "You can only cancel your own booking."))
         try:
-            SERVICE.cancel_booking(
+            self.service.cancel_booking(
                 current_user["id"],
                 booking_id,
                 channel_notice_sent=True,
@@ -216,7 +385,7 @@ class ParkingHandler(BaseHTTPRequestHandler):
         selected_date = payload.get("selected_date", date.today().isoformat())
         week = payload.get("week", self.current_week_start().isoformat())
         try:
-            SERVICE.join_waitlist(
+            self.service.join_waitlist(
                 current_user["id"],
                 current_user["id"],
                 payload.get("booking_date", ""),
@@ -230,13 +399,13 @@ class ParkingHandler(BaseHTTPRequestHandler):
         payload = self.parse_form()
         selected_date = payload.get("selected_date", date.today().isoformat())
         week = payload.get("week", self.current_week_start().isoformat())
-        SERVICE.leave_waitlist(current_user["id"], entry_id)
+        self.service.leave_waitlist(current_user["id"], entry_id)
         return self.redirect(self.dashboard_redirect(week, selected_date, "booking", "You left the waitlist."))
 
     def handle_update_rules(self, current_user) -> None:
         payload = self.parse_form()
-        REPO.update_rules(int(payload["max_days_per_week"]), int(payload["max_consecutive_days"]), int(payload["booking_window_days"]))
-        REPO.log_audit(current_user["id"], "rules_updated", "Updated booking rules")
+        self.repo.update_rules(int(payload["max_days_per_week"]), int(payload["max_consecutive_days"]), int(payload["booking_window_days"]))
+        self.repo.log_audit(current_user["id"], "rules_updated", "Updated booking rules")
         return self.redirect("/admin?flash=" + self.quote_message("Rules updated."))
 
     def handle_invite_user(self, current_user) -> None:
@@ -246,27 +415,35 @@ class ParkingHandler(BaseHTTPRequestHandler):
         temp_password = payload.get("password", "").strip() or "parking123"
         if not name or "@" not in email:
             return self.redirect("/admin?flash=" + self.quote_message("Please enter a valid name and email."))
-        if REPO.get_user_by_email(email):
+        if self.repo.get_user_by_email(email):
             return self.redirect("/admin?flash=" + self.quote_message("That email already exists."))
-        REPO.create_user(name, email, temp_password)
-        REPO.log_audit(current_user["id"], "user_invited", f"user={email}")
+        self.repo.create_user(name, email, temp_password)
+        self.repo.log_audit(current_user["id"], "user_invited", f"user={email}")
         return self.redirect("/admin?flash=" + self.quote_message("Employee created."))
 
     def handle_remove_user(self, current_user, user_id: int) -> None:
         if user_id == current_user["id"]:
             return self.redirect("/admin?flash=" + self.quote_message("You cannot remove your own admin account."))
-        REPO.remove_user(user_id)
-        REPO.log_audit(current_user["id"], "user_removed", f"user={user_id}")
+        self.repo.remove_user(user_id)
+        self.repo.log_audit(current_user["id"], "user_removed", f"user={user_id}")
         return self.redirect("/admin?flash=" + self.quote_message("Employee removed."))
 
     def handle_user_role(self, current_user, user_id: int) -> None:
         payload = self.parse_form()
         role = payload.get("role", "employee")
-        REPO.set_user_role(user_id, role)
-        REPO.log_audit(current_user["id"], "user_role_changed", f"user={user_id} role={role}")
+        self.repo.set_user_role(user_id, role)
+        self.repo.log_audit(current_user["id"], "user_role_changed", f"user={user_id} role={role}")
         return self.redirect("/admin?flash=" + self.quote_message("User role updated."))
 
-    def render_dashboard(self, current_user, flash: str | None, week_value: str | None, selected_date_value: str | None, active_tab: str, booking_mode: str) -> None:
+    def render_dashboard(
+        self,
+        current_user,
+        flash: str | None,
+        week_value: str | None,
+        selected_date_value: str | None,
+        active_tab: str,
+        booking_mode: str,
+    ) -> None:
         week_start = self.parse_week(week_value)
         selected_date = selected_date_value or week_start.isoformat()
         if not (week_start <= datetime.strptime(selected_date, "%Y-%m-%d").date() <= week_start + timedelta(days=6)):
@@ -275,16 +452,17 @@ class ParkingHandler(BaseHTTPRequestHandler):
             booking_mode = "self"
 
         week_cells = self.build_week_cells(current_user["id"], week_start, selected_date)
-        available_spots = REPO.list_available_spots(selected_date)
-        total_spots = len([spot for spot in REPO.list_spots() if spot["is_active"]])
+        available_spots = self.repo.list_available_spots(selected_date)
+        total_spots = len([spot for spot in self.repo.list_spots() if spot["is_active"]])
         selected_height = None
-        hidden_spots = REPO.list_unavailable_spots_for_vehicle(selected_date, selected_height)
-        day_bookings = REPO.list_bookings_for_date(selected_date)
+        hidden_spots = self.repo.list_unavailable_spots_for_vehicle(selected_date, selected_height)
+        day_bookings = self.repo.list_bookings_for_date(selected_date)
         booked_spots_count = len(day_bookings)
         booking_map = {row["spot_label"]: row for row in day_bookings}
         spot_map = []
-        for spot in REPO.list_spots():
+        for spot in self.repo.list_spots():
             booking = booking_map.get(spot["label"])
+            booked_user = self.repo.get_user(booking["user_id"]) if booking else None
             spot_map.append(
                 {
                     "label": spot["label"],
@@ -292,14 +470,14 @@ class ParkingHandler(BaseHTTPRequestHandler):
                     "status": "booked" if booking else "available",
                     "state": "Booked" if booking else "Available",
                     "booked_by_name": booking["booking_name"] if booking else "",
-                    "booked_by_image": REPO.get_user(booking["user_id"])["profile_image"] if booking else "",
+                    "booked_by_image": booked_user["profile_image"] if booked_user else "",
                     "detail": booking["booking_name"] if booking else "",
                 }
             )
 
         own_bookings = []
         booking_rows = sorted(
-            REPO.list_bookings_for_user(current_user["id"]),
+            self.repo.list_bookings_for_user(current_user["id"]),
             key=lambda row: (
                 0 if row["status"] == "active" else 1,
                 row["booking_date"] if row["status"] == "active" else f"z{row['booking_date']}",
@@ -327,9 +505,16 @@ class ParkingHandler(BaseHTTPRequestHandler):
                 }
             )
 
-        selected_booking = next((row for row in REPO.list_bookings_for_user(current_user["id"]) if row["booking_date"] == selected_date and row["status"] == "active"), None)
-        waitlist_entry = REPO.find_active_waitlist_entry(current_user["id"], selected_date)
-        garage_video_available = (STATIC_DIR / "assets" / "guide" / "garage-guide.mp4").exists()
+        selected_booking = next(
+            (
+                row
+                for row in self.repo.list_bookings_for_user(current_user["id"])
+                if row["booking_date"] == selected_date and row["status"] == "active"
+            ),
+            None,
+        )
+        waitlist_entry = self.repo.find_active_waitlist_entry(current_user["id"], selected_date)
+        garage_video_available = (self.static_dir / "assets" / "guide" / "garage-guide.mp4").exists()
         self.render_html(
             dashboard_page(
                 current_user=current_user,
@@ -354,6 +539,7 @@ class ParkingHandler(BaseHTTPRequestHandler):
                 current_week=week_start.isoformat(),
                 garage_video_available=garage_video_available,
                 formatted_selected_date=self.format_date(selected_date),
+                auth_mode=self.settings.auth_mode,
             )
         )
 
@@ -361,28 +547,28 @@ class ParkingHandler(BaseHTTPRequestHandler):
         self.render_html(
             admin_page(
                 current_user=current_user,
-                rules=REPO.get_rules(),
-                spots=REPO.list_spots(),
-                users=REPO.list_users(),
-                bookings=REPO.list_all_active_bookings(),
-                waitlist_entries=REPO.list_all_active_waitlist_entries(),
-                overrides=REPO.list_overrides(),
-                notifications=REPO.list_notification_events(),
-                audit_entries=REPO.list_audit_log(),
+                rules=self.repo.get_rules(),
+                spots=self.repo.list_spots(),
+                users=self.repo.list_users(),
+                bookings=self.repo.list_all_active_bookings(),
+                waitlist_entries=self.repo.list_all_active_waitlist_entries(),
+                overrides=self.repo.list_overrides(),
+                notifications=self.repo.list_notification_events(),
+                audit_entries=self.repo.list_audit_log(),
                 flash=flash,
             )
         )
 
     def build_week_cells(self, user_id: int, week_start: date, selected_date: str) -> list[dict[str, str | bool]]:
         today = date.today()
-        rules = REPO.get_rules()
+        rules = self.repo.get_rules()
         latest = today + timedelta(days=max(rules["booking_window_days"] - 1, 0))
-        active_spots = len([spot for spot in REPO.list_spots() if spot["is_active"]])
+        active_spots = len([spot for spot in self.repo.list_spots() if spot["is_active"]])
         cells = []
         for offset in range(7):
             day = week_start + timedelta(days=offset)
-            free = len(REPO.list_available_spots(day.isoformat())) if day.weekday() < 5 else 0
-            own_booking = REPO.get_user_booking_for_date(user_id, day.isoformat())
+            free = len(self.repo.list_available_spots(day.isoformat())) if day.weekday() < 5 else 0
+            own_booking = self.repo.get_user_booking_for_date(user_id, day.isoformat())
             bookable = day.weekday() < 5 and today <= day <= latest
             if day.weekday() >= 5:
                 state = "Weekend"
@@ -457,11 +643,23 @@ class ParkingHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
-    def redirect(self, location: str, cookie: str | None = None) -> None:
+    def render_json(self, payload: dict[str, object], status: HTTPStatus = HTTPStatus.OK) -> None:
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def redirect(self, location: str, cookie: str | list[str] | None = None) -> None:
         self.send_response(HTTPStatus.SEE_OTHER)
         self.send_header("Location", location)
         if cookie:
-            self.send_header("Set-Cookie", cookie)
+            if isinstance(cookie, list):
+                for item in cookie:
+                    self.send_header("Set-Cookie", item)
+            else:
+                self.send_header("Set-Cookie", cookie)
         self.end_headers()
 
     def quote_message(self, message: str) -> str:
@@ -474,4 +672,10 @@ class ParkingHandler(BaseHTTPRequestHandler):
         return "/?" + urlencode(params)
 
     def log_message(self, format: str, *args) -> None:
-        return
+        payload = {
+            "event": "http_request",
+            "client": self.address_string(),
+            "request_line": self.requestline,
+            "message": format % args if args else format,
+        }
+        print(json.dumps(payload), file=sys.stderr)

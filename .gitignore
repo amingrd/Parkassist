@@ -1,5 +1,12 @@
 __pycache__/
 *.pyc
 .DS_Store
+.env
+.env.*
+.venv/
+.pytest_cache/
+deploy/node_modules/
+deploy/cdk.out/
+deploy/dist/
 runtime/data/
 runtime/data/parking.db

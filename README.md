@@ -1,45 +1,129 @@
-# Parking Booking Internal Tool
+# ParkAssist
 
-A local-first internal parking booking tool that runs with only Python 3. It now includes:
+ParkAssist is an internal parking booking tool for LeasingMarkt. The app supports:
 
-- a calendar-first main view instead of a generic dashboard
-- a quieter premium UI with only small best-practice transitions and reduced-motion support
-- LM-specific inventory for `P5/P6` elevating car parks plus `P14-P21`
-- name + email-confirmation sign-in flow for local prototype access
-- hard rules for 1-week booking window, 3 days per work week, 2 consecutive days, and no same-day cancellation unless sick
-- waitlist marketplace with automatic promotion when a spot is released
-- admin tools for bans, rules, overrides, audit history, and notification events
+- week-based parking reservations
+- rule enforcement for weekly and consecutive booking limits
+- guest bookings and waitlists
+- admin management for users and rules
+- Slack notifications
+- local development with SQLite
+- internal AWS deployment with Okta and PostgreSQL
 
-## Run locally
+## Local development
+
+The default local mode keeps the existing prototype experience:
+
+- local sign-in and registration
+- SQLite database under `runtime/data/parking.db`
+- demo data enabled by default
+
+Start the app:
 
 ```bash
 python3 app.py
 ```
 
-The app starts on `http://127.0.0.1:8000`.
+Optional environment file:
 
-## Login flow
+```bash
+cp .env.example .env
+```
 
-- Enter your full name
-- Enter your email twice to confirm it
-- Existing users are matched by email
-- New users are created locally as employees
+## Runtime modes
 
-Seeded admin:
+### Local
 
-- `Alex Morgan` / `alex.morgan@example.com`
+Recommended for feature work:
 
-## Local architecture
+```bash
+AUTH_MODE=local
+APP_ENV=local
+SEED_DEMO_DATA=true
+```
 
-- `parking_app/`: application package for routing, auth, services, persistence, and templates
-- `assets/web/`: web-facing CSS, JS, and static assets
-- `runtime/data/`: local SQLite database and runtime-only files
-- `tests/`: service-level regression coverage
+### Internal AWS
 
-## Production follow-up
+Recommended for Infinity:
 
-- Replace local auth with Okta OIDC or company SSO
-- Swap the SQLite repository path for company-managed PostgreSQL
-- Point `SLACK_WEBHOOK_URL` at a real Slack incoming webhook
-- Add server-side CSRF/session hardening before broader internal rollout
-- Replace the local email-confirmation step with real mailbox verification if needed
+```bash
+AUTH_MODE=okta
+APP_ENV=production
+AWS_REGION=eu-west-1
+```
+
+Use:
+
+- `DATABASE_URL` or `DATABASE_SECRET_ID` for Aurora PostgreSQL
+- `SESSION_SECRET` or `SESSION_SECRET_PARAMETER`
+- `OKTA_CLIENT_SECRET` or `OKTA_CLIENT_SECRET_PARAMETER`
+- `BOOTSTRAP_ADMIN_EMAILS` for the first admin assignment after SSO login
+- `SLACK_WEBHOOK_URL` or `SLACK_WEBHOOK_URL_PARAMETER`
+
+Non-secret config belongs in Infinity `containerEnvironment`. Secrets should stay in AWS SSM Parameter Store or Secrets Manager.
+
+## Docker
+
+Build:
+
+```bash
+docker build -t parkassist:local .
+```
+
+Run:
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e APP_ENV=local \
+  -e AUTH_MODE=local \
+  -e SESSION_SECRET=dev-session-secret \
+  parkassist:local
+```
+
+## Health and tests
+
+Health endpoint:
+
+```text
+GET /health
+```
+
+Tests:
+
+```bash
+python3 -m py_compile app.py parking_app/*.py tests/*.py
+python3 -m unittest discover -s tests -v
+```
+
+## Deployment support files
+
+- `Dockerfile`
+- `deploy/bin/index.ts`
+- `deploy/lib/service.ts`
+- `deploy/lib/database.ts`
+- `deploy/lib/github-actions-roles.ts`
+- `scripts/parameters.sh`
+- `scripts/build.sh`
+- `scripts/synth.sh`
+- `scripts/deploy.sh`
+- `.github/workflows/ci.yaml`
+- `.github/workflows/cd.yaml`
+- `.github/workflows/bootstrap.yaml`
+- `catalog-info.yaml`
+- `docs/deployment.md`
+- `docs/runbook.md`
+- `docs/launch-readiness.md`
+
+## Current AWS rollout posture
+
+This repo is now prepared for the platform-recommended path:
+
+- Infinity-hosted internal runtime
+- Okta SSO
+- Aurora PostgreSQL in private subnets
+- Slack notifications for phase 1
+- secrets from SSM / Secrets Manager
+- Infinity CDK scaffolding under `deploy/`
+- GitHub Actions split into `ci`, `cd`, and `bootstrap`
+
+The remaining gaps are values, not structure: Okta registration details, actual secret/parameter names, dashboard/alarm targets, and final validation of the exact `@autoscout24/aws-cdk` construct props against the current template version in your AWS account.

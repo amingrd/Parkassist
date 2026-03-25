@@ -1,0 +1,22 @@
+{
+  "name": "parkassist-deploy",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "synth": "cdk synth",
+    "deploy": "cdk deploy --require-approval never",
+    "bootstrap": "cdk deploy GithubActionsRolesStack --require-approval never"
+  },
+  "dependencies": {
+    "@autoscout24/aws-cdk": "^7.30.0",
+    "aws-cdk-lib": "^2.170.0",
+    "constructs": "^10.4.2",
+    "source-map-support": "^0.5.21"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.2"
+  }
+}

@@ -1,0 +1,86 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - feature/**
+
+env:
+  AWS_REGION: eu-west-1
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Configure AWS credentials
+        if: ${{ vars.AWS_ACCOUNT_ID != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-${{ github.event.repository.name }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Login to Amazon ECR
+        if: ${{ vars.AWS_ACCOUNT_ID != '' }}
+        uses: aws-actions/amazon-ecr-login@v2
+        id: login-ecr
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Build project
+        env:
+          IMAGE_TAG: ${{ github.sha }}
+        run: scripts/build.sh
+      - name: Push image to ECR
+        if: ${{ steps.login-ecr.outcome == 'success' }}
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          REPOSITORY_NAME="${ECR_REPOSITORY:-${GITHUB_REPOSITORY##*/}}"
+          IMAGE_URI="${REGISTRY}/${REPOSITORY_NAME}:${IMAGE_TAG}"
+          docker tag "parkassist:${IMAGE_TAG}" "${IMAGE_URI}"
+          docker push "${IMAGE_URI}"
+
+  synth:
+    runs-on: ubuntu-latest
+    needs: [build]
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Configure AWS credentials
+        if: ${{ vars.AWS_ACCOUNT_ID != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-${{ github.event.repository.name }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Synth CDK
+        env:
+          AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: scripts/synth.sh
