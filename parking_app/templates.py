@@ -69,7 +69,27 @@ def html_page(title: str, body: str, current_user=None, flash: Optional[str] = N
 """
 
 
-def login_page(mode: str = "login", flash: Optional[str] = None) -> str:
+def login_page(
+    mode: str = "login",
+    flash: Optional[str] = None,
+    *,
+    auth_mode: str = "local",
+    okta_login_href: Optional[str] = None,
+) -> str:
+    if auth_mode == "okta":
+        body = f"""
+        <main class="auth-layout auth-simple">
+          <section class="glass auth-card">
+            <div class="auth-brand">{logo_markup()}</div>
+            <h1>Secure internal parking access.</h1>
+            <p class="lead">Sign in with Okta to open the ParkAssist workspace for employees.</p>
+            <div class="auth-panel">
+              <a class="primary-link-button auth-sso-button" href="{escape(okta_login_href or '/auth/okta/start')}">Continue with Okta</a>
+            </div>
+          </section>
+        </main>
+        """
+        return html_page("Parking Login", body, flash=flash, show_header=False)
     body = f"""
     <main class="auth-layout auth-simple">
       <section class="glass auth-card">
@@ -127,6 +147,7 @@ def dashboard_page(
     current_week: str,
     garage_video_available: bool,
     formatted_selected_date: str,
+    auth_mode: str,
 ) -> str:
     admin_link = '<a class="auth-tab" href="/admin">Admin</a>' if current_user["role"] == "admin" else ""
     tabs = {
@@ -274,18 +295,34 @@ def dashboard_page(
       <p class="lead compact">P5 is the lower double-parker. P6 is the upper double-parker. Check the vehicle height limit before you book.</p>
     </section>
     """
+    if auth_mode == "okta":
+        profile_form = f"""
+        <form method="post" action="/profile/update" class="stack-form">
+          <input type="hidden" name="week" value="{escape(current_week)}">
+          <input type="hidden" name="date" value="{escape(selected_date)}">
+          <div class="info-box"><p>Name and email are managed through Okta in this environment.</p></div>
+          <label>Full name<input type="text" value="{escape(current_user['name'])}" disabled></label>
+          <label>Email<input type="email" value="{escape(current_user['email'])}" disabled></label>
+          <label>Profile image or initials<input type="text" name="profile_image" value="{escape(current_user['profile_image'])}" placeholder="Optional"></label>
+          <button type="submit">Save profile</button>
+        </form>
+        """
+    else:
+        profile_form = f"""
+        <form method="post" action="/profile/update" class="stack-form">
+          <input type="hidden" name="week" value="{escape(current_week)}">
+          <input type="hidden" name="date" value="{escape(selected_date)}">
+          <label>Full name<input type="text" name="name" value="{escape(current_user['name'])}" required></label>
+          <label>Email<input type="email" name="email" value="{escape(current_user['email'])}" required></label>
+          <label>Profile image or initials<input type="text" name="profile_image" value="{escape(current_user['profile_image'])}" placeholder="Optional"></label>
+          <button type="submit">Save profile</button>
+        </form>
+        """
     profile_panel = f"""
     <section class="glass panel-card">
       <p class="eyebrow">Profile</p>
       <h3>Update your details</h3>
-      <form method="post" action="/profile/update" class="stack-form">
-        <input type="hidden" name="week" value="{escape(current_week)}">
-        <input type="hidden" name="date" value="{escape(selected_date)}">
-        <label>Full name<input type="text" name="name" value="{escape(current_user['name'])}" required></label>
-        <label>Email<input type="email" name="email" value="{escape(current_user['email'])}" required></label>
-        <label>Profile image or initials<input type="text" name="profile_image" value="{escape(current_user['profile_image'])}" placeholder="Optional"></label>
-        <button type="submit">Save profile</button>
-      </form>
+      {profile_form}
       <form method="post" action="/logout" class="stack-form compact-form">
         <button class="secondary-button" type="submit">Log out</button>
       </form>

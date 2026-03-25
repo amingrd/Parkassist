@@ -16,6 +16,8 @@ CREATE TABLE IF NOT EXISTS users (
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT,
   role TEXT NOT NULL CHECK(role IN ('admin', 'employee')),
+  auth_provider TEXT NOT NULL DEFAULT 'local',
+  external_subject TEXT NOT NULL DEFAULT '',
   email_verified INTEGER NOT NULL DEFAULT 0,
   is_banned INTEGER NOT NULL DEFAULT 0,
   profile_image TEXT NOT NULL DEFAULT ''
@@ -159,11 +161,18 @@ class Repository:
                 conn.execute("UPDATE rule_sets SET booking_window_days = 8 WHERE booking_window_days = 7")
             if conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"] == 0:
                 conn.executemany(
-                    "INSERT INTO users (name, email, password_hash, role, email_verified, is_banned) VALUES (?, ?, ?, ?, ?, ?)",
+                    """
+                    INSERT INTO users (
+                      name, email, password_hash, role, auth_provider, external_subject, email_verified, is_banned
+                    ) VALUES (?, ?, ?, ?, 'local', '', ?, ?)
+                    """,
                     [(name, email, hash_password("parking123"), role, verified, banned) for name, email, role, verified, banned in SEED_USERS],
                 )
             else:
-                conn.execute("UPDATE users SET password_hash = ? WHERE password_hash IS NULL", (hash_password("parking123"),))
+                conn.execute(
+                    "UPDATE users SET password_hash = ? WHERE password_hash IS NULL AND auth_provider = 'local'",
+                    (hash_password("parking123"),),
+                )
                 conn.execute("UPDATE parking_spots SET notes = '' WHERE label IN ('P14','P15','P16','P17','P18','P19','P20','P21')")
                 conn.execute(
                     """
@@ -199,6 +208,8 @@ class Repository:
         user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)").fetchall()}
         for name, definition in {
             "password_hash": "TEXT",
+            "auth_provider": "TEXT NOT NULL DEFAULT 'local'",
+            "external_subject": "TEXT NOT NULL DEFAULT ''",
             "email_verified": "INTEGER NOT NULL DEFAULT 0",
             "is_banned": "INTEGER NOT NULL DEFAULT 0",
             "profile_image": "TEXT NOT NULL DEFAULT ''",
@@ -298,19 +309,81 @@ class Repository:
         with self.connection() as conn:
             return conn.execute("SELECT * FROM users WHERE lower(email) = lower(?)", (email,)).fetchone()
 
-    def create_user(self, name: str, email: str, password: str, role: str = "employee") -> sqlite3.Row:
+    def get_user_by_subject(self, auth_provider: str, external_subject: str) -> Optional[sqlite3.Row]:
+        with self.connection() as conn:
+            return conn.execute(
+                "SELECT * FROM users WHERE auth_provider = ? AND external_subject = ?",
+                (auth_provider, external_subject),
+            ).fetchone()
+
+    def create_user(
+        self,
+        name: str,
+        email: str,
+        password: str | None,
+        role: str = "employee",
+        *,
+        auth_provider: str = "local",
+        external_subject: str = "",
+    ) -> sqlite3.Row:
         with self.connection() as conn:
             cursor = conn.execute(
-                "INSERT INTO users (name, email, password_hash, role, email_verified, is_banned) VALUES (?, ?, ?, ?, 1, 0)",
-                (name, email, hash_password(password), role),
+                """
+                INSERT INTO users (
+                  name, email, password_hash, role, auth_provider, external_subject, email_verified, is_banned
+                ) VALUES (?, ?, ?, ?, ?, ?, 1, 0)
+                """,
+                (name, email, hash_password(password) if password else None, role, auth_provider, external_subject),
             )
             return conn.execute("SELECT * FROM users WHERE id = ?", (cursor.lastrowid,)).fetchone()
 
     def authenticate_user(self, email: str, password: str) -> Optional[sqlite3.Row]:
         user = self.get_user_by_email(email)
-        if user and verify_password(password, user["password_hash"]):
+        if user and user["auth_provider"] == "local" and verify_password(password, user["password_hash"]):
             return user
         return None
+
+    def find_or_create_sso_user(
+        self,
+        *,
+        name: str,
+        email: str,
+        auth_provider: str,
+        external_subject: str,
+    ) -> sqlite3.Row:
+        existing_by_subject = self.get_user_by_subject(auth_provider, external_subject)
+        if existing_by_subject:
+            with self.connection() as conn:
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET name = ?, email = ?, email_verified = 1
+                    WHERE id = ?
+                    """,
+                    (name, email, existing_by_subject["id"]),
+                )
+                return conn.execute("SELECT * FROM users WHERE id = ?", (existing_by_subject["id"],)).fetchone()
+
+        existing_by_email = self.get_user_by_email(email)
+        if existing_by_email:
+            with self.connection() as conn:
+                conn.execute(
+                    """
+                    UPDATE users
+                    SET name = ?, auth_provider = ?, external_subject = ?, email_verified = 1
+                    WHERE id = ?
+                    """,
+                    (name, auth_provider, external_subject, existing_by_email["id"]),
+                )
+                return conn.execute("SELECT * FROM users WHERE id = ?", (existing_by_email["id"],)).fetchone()
+
+        return self.create_user(
+            name,
+            email,
+            None,
+            auth_provider=auth_provider,
+            external_subject=external_subject,
+        )
 
     def update_profile_image(self, user_id: int, profile_image: str) -> None:
         with self.connection() as conn:

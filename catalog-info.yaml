@@ -1,0 +1,17 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: parkassist
+  description: Internal parking booking tool for LeasingMarkt employees.
+  annotations:
+    github.com/project-slug: amingrd/Parkassist
+  links:
+    - url: https://github.com/amingrd/Parkassist
+      title: Source repository
+    - url: ./docs/runbook.md
+      title: Runbook
+spec:
+  type: service
+  lifecycle: experimental
+  owner: user:default/agardi
+  system: workplace-operations
