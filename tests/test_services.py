@@ -50,7 +50,7 @@ class BookingServiceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo = Repository(Path(self.temp_dir.name) / "test.db", seed_demo_data=False)
-        self.repo.update_rules(3, 2, 7)
+        self.repo.update_rules(3, 2, 8)
         self.service = BookingService(self.repo, LocalNotificationSink(self.repo))
 
     def tearDown(self) -> None:
@@ -58,6 +58,13 @@ class BookingServiceTests(unittest.TestCase):
 
     def test_booking_succeeds_within_limits(self) -> None:
         booking_id = self.service.create_booking(2, 2, next_workday(2), policy_acknowledged=True)
+        self.assertGreater(booking_id, 0)
+
+    def test_default_window_allows_same_weekday_next_week(self) -> None:
+        target_day = (date.today() + timedelta(days=7)).isoformat()
+        if date.today().weekday() >= 5:
+            self.skipTest("Weekend-to-weekend does not create a bookable workday case.")
+        booking_id = self.service.create_booking(2, 2, target_day, policy_acknowledged=True)
         self.assertGreater(booking_id, 0)
 
     def test_weekly_limit_is_enforced(self) -> None:
@@ -69,10 +76,11 @@ class BookingServiceTests(unittest.TestCase):
             self.service.create_booking(2, 2, day_three, policy_acknowledged=True)
 
     def test_consecutive_limit_is_enforced(self) -> None:
-        self.service.create_booking(2, 2, next_workday(1), policy_acknowledged=True)
-        self.service.create_booking(2, 2, next_workday(2), policy_acknowledged=True)
+        first_day, second_day, third_day = consecutive_workdays(3)
+        self.service.create_booking(2, 2, first_day, policy_acknowledged=True)
+        self.service.create_booking(2, 2, second_day, policy_acknowledged=True)
         with self.assertRaises(BookingError):
-            self.service.create_booking(2, 2, next_workday(3), policy_acknowledged=True)
+            self.service.create_booking(2, 2, third_day, policy_acknowledged=True)
 
     def test_policy_acknowledgement_is_required(self) -> None:
         with self.assertRaises(BookingError):
@@ -151,6 +159,8 @@ class BookingServiceTests(unittest.TestCase):
             self.repo.create_booking(4, spot["id"], target_day, "test-fill")
         entry_id = self.service.join_waitlist(2, 2, target_day)
         self.assertGreater(entry_id, 0)
+        notifications = self.repo.list_notification_events()
+        self.assertTrue(any(event["kind"] == "waitlist_joined" for event in notifications))
         booking_to_cancel = self.repo.list_bookings_for_date(target_day)[0]["id"]
         promoted_booking_id = self.service.cancel_booking(1, booking_to_cancel, is_admin=True)
         self.assertIsNotNone(promoted_booking_id)

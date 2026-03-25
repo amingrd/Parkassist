@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from parking_app.auth import clear_session_cookie, make_session_cookie, parse_user_cookie
-from parking_app.notifications import SlackWebhookSink
+from parking_app.notifications import MultiChannelNotificationSink
 from parking_app.repository import Repository
 from parking_app.services import BookingError, BookingService
 from parking_app.templates import admin_page, dashboard_page, login_page
@@ -17,7 +17,20 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "assets" / "web"
 DATA_DIR = BASE_DIR / "runtime" / "data"
 REPO = Repository(DATA_DIR / "parking.db")
-SERVICE = BookingService(REPO, SlackWebhookSink(REPO, os.environ.get("SLACK_WEBHOOK_URL")))
+SERVICE = BookingService(
+    REPO,
+    MultiChannelNotificationSink(
+        REPO,
+        os.environ.get("SLACK_WEBHOOK_URL"),
+        smtp_host=os.environ.get("SMTP_HOST"),
+        smtp_port=int(os.environ.get("SMTP_PORT", "587")),
+        smtp_username=os.environ.get("SMTP_USERNAME"),
+        smtp_password=os.environ.get("SMTP_PASSWORD"),
+        smtp_use_tls=os.environ.get("SMTP_USE_TLS", "true").lower() != "false",
+        sender_email=os.environ.get("EMAIL_FROM"),
+        guide_url=os.environ.get("PARKING_GUIDE_URL"),
+    ),
+)
 
 
 def run() -> None:
@@ -362,7 +375,8 @@ class ParkingHandler(BaseHTTPRequestHandler):
 
     def build_week_cells(self, user_id: int, week_start: date, selected_date: str) -> list[dict[str, str | bool]]:
         today = date.today()
-        latest = today + timedelta(days=6)
+        rules = REPO.get_rules()
+        latest = today + timedelta(days=max(rules["booking_window_days"] - 1, 0))
         active_spots = len([spot for spot in REPO.list_spots() if spot["is_active"]])
         cells = []
         for offset in range(7):
@@ -421,7 +435,7 @@ class ParkingHandler(BaseHTTPRequestHandler):
         return datetime.strptime(value, "%Y-%m-%d").strftime("%d.%m.%Y")
 
     def vehicle_height_value(self, selection: str | None) -> int | None:
-        mapping = {"small": 145, "medium": 160, "large": 175}
+        mapping = {"small": 149, "medium": 166, "large": 176}
         return mapping.get(selection or "")
 
     def parse_form(self) -> dict[str, str]:

@@ -161,7 +161,7 @@ def dashboard_page(
         for cell in week_cells
     )
     spot_options = '<option value="">Auto-assign the best available spot</option>' + "".join(
-        f'<option value="{spot["id"]}">{escape(spot["label"])}{" · " + escape(spot["notes"]) if spot["notes"] else ""}</option>'
+        f'<option value="{spot["id"]}" data-max-height="{"" if spot["max_height_cm"] is None else spot["max_height_cm"]}">{escape(spot["label"])}{" · " + escape(spot["notes"]) if spot["notes"] else ""}</option>'
         for spot in compatible_spots
     )
     hidden_notes = "".join(f"<li>{escape(spot['label'])}: max {escape(str(spot['max_height_cm']))} cm vehicle height</li>" for spot in hidden_spots)
@@ -197,7 +197,7 @@ def dashboard_page(
       <section class="glass panel-card">
         <div class="panel-header">
           <div>
-            <p class="eyebrow">Booking</p>
+            <p class="eyebrow">Calendar</p>
             <h3>{escape(formatted_selected_date)}</h3>
           </div>
           <p class="panel-summary">{escape(selected_day_summary)}</p>
@@ -206,14 +206,14 @@ def dashboard_page(
           <a class="booking-mode-tab {'secondary' if booking_mode == 'guest' else 'active'}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=booking&booking_mode=self">Book for yourself</a>
           <a class="booking-mode-tab {'active' if booking_mode == 'guest' else 'secondary'}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=booking&booking_mode=guest">Book for someone else</a>
         </div>
-        <form method="post" action="/bookings" class="stack-form form-spacing">
+        <form method="post" action="/bookings" class="stack-form form-spacing" data-vehicle-size-form>
           <input type="hidden" name="booking_date" value="{escape(selected_date)}">
           <input type="hidden" name="selected_date" value="{escape(selected_date)}">
           <input type="hidden" name="week" value="{escape(current_week)}">
           <input type="hidden" name="booking_mode" value="{escape(booking_mode)}">
           <label>
             Vehicle size
-            <select name="vehicle_size">
+            <select name="vehicle_size" data-vehicle-size-select>
               <option value="">No size limit</option>
               <option value="small">Small car under 150 cm</option>
               <option value="medium">Mid-size car up to 165 cm</option>
@@ -222,8 +222,9 @@ def dashboard_page(
           </label>
           <label>
             Parking spot
-            <select name="spot_id">{spot_options}</select>
+            <select name="spot_id" data-spot-select>{spot_options}</select>
           </label>
+          <p class="helper-text vehicle-fit-note" data-vehicle-fit-note hidden></p>
           <div class="guest-fields {'hidden-guest-fields' if booking_mode != 'guest' else ''}">
             <label>
               Guest name
@@ -257,7 +258,7 @@ def dashboard_page(
     """
     history_panel = f"""
     <section class="glass panel-card">
-      <p class="eyebrow">History</p>
+      <p class="eyebrow">Bookings</p>
       <h3>Your booked spots</h3>
       <table>
         <thead><tr><th>Date</th><th>Spot</th><th>Reserved for</th><th>Duration</th><th>Status</th><th></th></tr></thead>
@@ -308,8 +309,8 @@ def dashboard_page(
       </section>
       <section class="content-stack">
         <div class="tab-row">
-          <a class="auth-tab {tabs['booking']}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=booking">Booking</a>
-          <a class="auth-tab {tabs['history']}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=history">History</a>
+          <a class="auth-tab {tabs['booking']}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=booking">Calendar</a>
+          <a class="auth-tab {tabs['history']}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=history">Bookings</a>
           <a class="auth-tab {tabs['guide']}" href="/?week={escape(current_week)}&date={escape(selected_date)}&tab=guide">Guide</a>
           {admin_link}
         </div>
@@ -380,13 +381,13 @@ def admin_page(*, current_user, rules, spots, users, bookings, waitlist_entries,
           <td>{escape(row['name'])}</td>
           <td>{escape(row['email'])}</td>
           <td>{escape(row['role'])}</td>
-          <td>
+          <td class="admin-actions">
             <form method="post" action="/admin/users/{row['id']}/role" class="inline-form">
               <input type="hidden" name="role" value="{'employee' if row['role'] == 'admin' else 'admin'}">
-              <button class="ghost-button" type="submit">{'Make employee' if row['role'] == 'admin' else 'Make admin'}</button>
+              <button class="ghost-button admin-action-button" type="submit">{'Make employee' if row['role'] == 'admin' else 'Make admin'}</button>
             </form>
             <form method="post" action="/admin/users/{row['id']}/remove" class="inline-form">
-              <button class="ghost-button" type="submit">Remove</button>
+              <button class="ghost-button admin-action-button" type="submit">Remove</button>
             </form>
           </td>
         </tr>
@@ -417,39 +418,39 @@ def admin_page(*, current_user, rules, spots, users, bookings, waitlist_entries,
       </section>
       {summary_cards}
       <section class="admin-layout">
-      <section class="glass panel-card">
+      <section class="glass panel-card admin-panel admin-panel-people">
         <p class="eyebrow">People</p>
         <h3>Invite or update employees</h3>
-        <form method="post" action="/admin/invite" class="stack-form">
+        <form method="post" action="/admin/invite" class="stack-form admin-compact-form">
           <label>Full name<input type="text" name="name" required></label>
           <label>Email<input type="email" name="email" required></label>
           <label>Temporary password<input type="text" name="password" placeholder="parking123"></label>
           <button type="submit">Create employee</button>
         </form>
-        <table>
+        <table class="dense-table">
           <thead><tr><th></th><th>Name</th><th>Email</th><th>Role</th><th>Actions</th></tr></thead>
           <tbody>{user_rows}</tbody>
         </table>
       </section>
-      <section class="glass panel-card">
+      <section class="glass panel-card admin-panel">
         <p class="eyebrow">Rules</p>
         <h3>Booking limits</h3>
-        <form method="post" action="/admin/rules" class="stack-form">
+        <form method="post" action="/admin/rules" class="stack-form admin-compact-form">
           <label>Max days per week<input type="number" name="max_days_per_week" min="1" max="5" value="{rules['max_days_per_week']}"></label>
           <label>Max consecutive days<input type="number" name="max_consecutive_days" min="1" max="5" value="{rules['max_consecutive_days']}"></label>
-          <label>Booking window in days<input type="number" name="booking_window_days" min="1" max="7" value="{rules['booking_window_days']}"></label>
+          <label>Booking window in days<input type="number" name="booking_window_days" min="1" max="14" value="{rules['booking_window_days']}"></label>
           <button type="submit">Save rules</button>
         </form>
       </section>
-      <section class="glass panel-card">
+      <section class="glass panel-card admin-panel">
         <p class="eyebrow">Garage inventory</p>
         <h3>Managed parking spots</h3>
-        <table><thead><tr><th>Spot</th><th>Type</th><th>Height limit</th></tr></thead><tbody>{spot_rows}</tbody></table>
+        <table class="dense-table"><thead><tr><th>Spot</th><th>Type</th><th>Height limit</th></tr></thead><tbody>{spot_rows}</tbody></table>
       </section>
-      <section class="glass panel-card">
+      <section class="glass panel-card admin-panel">
         <p class="eyebrow">Live bookings</p>
         <h3>Today and upcoming reservations</h3>
-        <table><thead><tr><th>Date</th><th>Spot</th><th>Reserved for</th></tr></thead><tbody>{booking_rows or '<tr><td colspan="3">No active bookings.</td></tr>'}</tbody></table>
+        <table class="dense-table"><thead><tr><th>Date</th><th>Spot</th><th>Reserved for</th></tr></thead><tbody>{booking_rows or '<tr><td colspan="3">No active bookings.</td></tr>'}</tbody></table>
       </section>
       </section>
     </main>

@@ -30,7 +30,7 @@ def workweek_bounds(day: date) -> tuple[date, date]:
 def build_calendar_days(window_days: int) -> list[date]:
     today = date.today()
     start = today - timedelta(days=today.weekday())
-    end = today + timedelta(days=window_days)
+    end = today + timedelta(days=max(window_days - 1, 0))
     days: list[date] = []
     cursor = start
     while cursor <= end:
@@ -72,7 +72,7 @@ class BookingService:
             reasons.append("Parking can only be booked for Monday to Friday.")
 
         earliest = date.today()
-        latest = date.today() + timedelta(days=rules["booking_window_days"])
+        latest = date.today() + timedelta(days=max(rules["booking_window_days"] - 1, 0))
         if booking_date < earliest or booking_date > latest:
             reasons.append(f"You may only book up to {rules['booking_window_days']} days in advance.")
 
@@ -186,6 +186,18 @@ class BookingService:
                 message=f"Your parking space {spot['label']} is confirmed for {booking_date_str}.",
             )
         )
+        if guest_email.strip():
+            booker = self.repository.get_user(actor_user_id)
+            booked_by = booker["name"] if booker else "A colleague"
+            self.notifier.send(
+                Notification(
+                    kind="guest_booking_created",
+                    user_id=target_user_id,
+                    recipient_email=guest_email.strip().lower(),
+                    title="Guest parking booked for you",
+                    message=f"{booked_by} booked parking space {spot['label']} for you on {booking_date_str}. You can also find the parking guide video below.",
+                )
+            )
         return booking_id
 
     def cancel_booking(
@@ -237,6 +249,14 @@ class BookingService:
             raise BookingError("You are already on the waitlist for this date.")
         waitlist_id = self.repository.add_waitlist_entry(target_user_id, booking_date_str, vehicle_height_cm)
         self.repository.log_audit(actor_user_id, "waitlist_joined", f"user={target_user_id} date={booking_date_str}")
+        self.notifier.send(
+            Notification(
+                kind="waitlist_joined",
+                user_id=target_user_id,
+                title="You joined the parking waitlist",
+                message=f"You are on the waitlist for {booking_date_str}. We will email you if a matching spot opens up.",
+            )
+        )
         return waitlist_id
 
     def leave_waitlist(self, actor_user_id: int, entry_id: int) -> None:
@@ -259,12 +279,14 @@ class BookingService:
             )
             self.repository.promote_waitlist_entry(entry["id"], booking_id)
             self.repository.log_audit(actor_user_id, "waitlist_promoted", f"entry={entry['id']} booking={booking_id}")
+            booked_spot = self.repository.get_booking(booking_id)
+            spot = self.repository.get_spot(booked_spot["spot_id"]) if booked_spot else None
             self.notifier.send(
                 Notification(
                     kind="waitlist_promoted",
                     user_id=entry["user_id"],
                     title="Waitlist promotion",
-                    message=f"A parking space opened up and was assigned to you for {booking_date_str}.",
+                    message=f"A parking space opened up and was assigned to you for {booking_date_str}{f' at {spot['label']}' if spot else ''}.",
                 )
             )
             return booking_id

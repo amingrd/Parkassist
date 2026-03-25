@@ -153,8 +153,10 @@ class Repository:
             self._migrate_schema(conn)
             if conn.execute("SELECT COUNT(*) AS count FROM rule_sets").fetchone()["count"] == 0:
                 conn.execute(
-                    "INSERT INTO rule_sets (id, max_days_per_week, max_consecutive_days, booking_window_days) VALUES (1, 3, 2, 7)"
+                    "INSERT INTO rule_sets (id, max_days_per_week, max_consecutive_days, booking_window_days) VALUES (1, 3, 2, 8)"
                 )
+            else:
+                conn.execute("UPDATE rule_sets SET booking_window_days = 8 WHERE booking_window_days = 7")
             if conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"] == 0:
                 conn.executemany(
                     "INSERT INTO users (name, email, password_hash, role, email_verified, is_banned) VALUES (?, ?, ?, ?, ?, ?)",
